@@ -1,0 +1,48 @@
+# Maintainer: mystiquectl maintainers <noreply@users.noreply.github.com>
+#
+# This repo owner/URL is filled in as sowndev0106/mystiquectl -- if the repo
+# is ever moved or forked under a different account, update the url= and
+# source= lines below, then regenerate sha256sums with `updpkgsums`.
+pkgname=mystiquectl
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Linux control app for the DeepCool MYSTIQUE 360 LCD AIO cooler (unofficial, no affiliation with DeepCool)"
+arch=('any')
+url="https://github.com/sowndev0106/mystiquectl"
+license=('GPL3')
+depends=('python' 'python-pyusb' 'usbutils')
+source=("https://github.com/sowndev0106/mystiquectl/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+  install -dm755 "$pkgdir/usr/share/mystiquectl"
+  cp -a "$srcdir/${pkgname}-${pkgver}"/. "$pkgdir/usr/share/mystiquectl/"
+
+  install -dm755 "$pkgdir/usr/bin"
+  # /usr/share is root-owned, so the Electron runtime can't be fetched there
+  # by a normal user -- cache it per-user instead and let install.sh (shipped
+  # in this same package, under /usr/share/mystiquectl) bootstrap it there
+  # the first time.
+  cat > "$pkgdir/usr/bin/${pkgname}" <<'EOF'
+#!/bin/sh
+set -e
+export DC_ELECTRON_DIR="${DC_ELECTRON_DIR:-$HOME/.local/share/mystiquectl/electron}"
+if [ ! -x "$DC_ELECTRON_DIR/electron" ]; then
+  echo "mystiquectl: first run -- fetching the Electron runtime into $DC_ELECTRON_DIR ..." >&2
+  mkdir -p "$DC_ELECTRON_DIR"
+  /usr/share/mystiquectl/install.sh install
+fi
+exec /usr/share/mystiquectl/run-real.sh "$@"
+EOF
+  chmod 755 "$pkgdir/usr/bin/${pkgname}"
+}
+
+post_install() {
+  echo "mystiquectl installed. The first 'mystiquectl' run will fetch the pinned"
+  echo "Electron runtime into ~/.local/share/mystiquectl automatically."
+  echo "You still need your own DeepCool app.asar -- see /usr/share/mystiquectl/README.md."
+}
+
+post_upgrade() {
+  post_install
+}

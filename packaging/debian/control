@@ -1,0 +1,26 @@
+Source: mystiquectl
+Section: utils
+Priority: optional
+Maintainer: mystiquectl maintainers <noreply@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+Homepage: https://github.com/<owner>/mystiquectl
+Rules-Requires-Root: no
+
+Package: mystiquectl
+Architecture: all
+Depends: ${misc:Depends}, python3, python3-usb, usbutils
+Description: Linux control utility for the DeepCool MYSTIQUE 360 LCD AIO cooler
+ mystiquectl repacks DeepCool's own official MYSTIQUE Electron control
+ application (extracted locally by the user from DeepCool's own Windows
+ installer) so it runs natively on Linux, backed by real Linux sensor
+ telemetry and a small USB bridge to the physical cooler
+ (vendor:product 3633:0009).
+ .
+ This package does not include DeepCool's app.asar or the Electron
+ runtime; both must be fetched/extracted separately after installation
+ (run `mystiquectl update`, or see the project's install.sh), since
+ DeepCool's own application bundle is proprietary and is never
+ redistributed by this project.
+ .
+ This project is not affiliated with or endorsed by DeepCool.

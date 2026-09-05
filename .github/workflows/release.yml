@@ -1,0 +1,162 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release assets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute tag/version
+        id: vars
+        run: |
+          set -euo pipefail
+          TAG="$GITHUB_REF_NAME"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # Safety net: this repo must never ship DeepCool's proprietary
+      # app.asar, nor a committed copy of the vendored Electron binary
+      # (both are meant to be fetched/extracted locally by install.sh /
+      # the user, never redistributed from this repo). Fail loudly rather
+      # than silently packaging either into a release artifact.
+      - name: Verify no vendored Electron or app.asar is present
+        run: |
+          set -euo pipefail
+          fail=0
+
+          if [ -e .electron ]; then
+            echo "::error::.electron/ is present in the checked-out tree. The vendored Electron binary must never be committed to this repo -- it is fetched by install.sh at install time."
+            fail=1
+          fi
+
+          tracked_asar=$(git ls-files -- '*.asar' || true)
+          if [ -n "$tracked_asar" ]; then
+            echo "::error::*.asar file(s) are tracked in git. DeepCool's app.asar must never be committed or redistributed:"
+            echo "$tracked_asar"
+            fail=1
+          fi
+
+          present_asar=$(find . -path './.git' -prune -o -name '*.asar' -print)
+          if [ -n "$present_asar" ]; then
+            echo "::error::*.asar file(s) found in the working tree:"
+            echo "$present_asar"
+            fail=1
+          fi
+
+          if [ "$fail" -ne 0 ]; then
+            exit 1
+          fi
+          echo "OK: no .electron/ directory or *.asar files found."
+
+      - name: Build source tarball
+        id: tarball
+        env:
+          TAG: ${{ steps.vars.outputs.tag }}
+        run: |
+          set -euo pipefail
+          OUT="mystiquectl-${TAG}-linux.tar.gz"
+          git archive \
+            --format=tar.gz \
+            --prefix="mystiquectl-${TAG}/" \
+            -o "$OUT" \
+            HEAD -- . \
+            ':(exclude).electron' \
+            ':(exclude)capture*' \
+            ':(exclude)shots*' \
+            ':(exclude)__pycache__' \
+            ':(exclude)__pycache__/**' \
+            ':(exclude)**/__pycache__' \
+            ':(exclude)**/__pycache__/**'
+          echo "path=$OUT" >> "$GITHUB_OUTPUT"
+          ls -lh "$OUT"
+
+      - name: Build minimal .deb package
+        id: deb
+        env:
+          TAG: ${{ steps.vars.outputs.tag }}
+          VERSION: ${{ steps.vars.outputs.version }}
+          TARBALL: ${{ steps.tarball.outputs.path }}
+        run: |
+          set -euo pipefail
+          STAGE="$(mktemp -d)/mystiquectl-deb"
+          mkdir -p "$STAGE/DEBIAN" "$STAGE/usr/share/mystiquectl" "$STAGE/usr/bin"
+
+          # Reuse the exact same tree that went into the source tarball so
+          # the .deb never picks up capture*/, shots*/, __pycache__/ or
+          # .electron/ either.
+          tar --strip-components=1 -xzf "$TARBALL" -C "$STAGE/usr/share/mystiquectl"
+
+          # /usr/share is root-owned, so the Electron runtime can't be fetched
+          # there by a normal user on first run -- point it at a per-user
+          # cache instead and let install.sh (shipped in this same package,
+          # under /usr/share/mystiquectl) bootstrap it there the first time.
+          cat > "$STAGE/usr/bin/mystiquectl" <<'WRAPPER'
+          #!/bin/sh
+          set -e
+          export DC_ELECTRON_DIR="${DC_ELECTRON_DIR:-$HOME/.local/share/mystiquectl/electron}"
+          if [ ! -x "$DC_ELECTRON_DIR/electron" ]; then
+            echo "mystiquectl: first run -- fetching the Electron runtime into $DC_ELECTRON_DIR ..." >&2
+            mkdir -p "$DC_ELECTRON_DIR"
+            /usr/share/mystiquectl/install.sh install
+          fi
+          exec /usr/share/mystiquectl/run-real.sh "$@"
+          WRAPPER
+          chmod 0755 "$STAGE/usr/bin/mystiquectl"
+
+          cat > "$STAGE/DEBIAN/control" <<CONTROL
+          Package: mystiquectl
+          Version: ${VERSION}
+          Section: utils
+          Priority: optional
+          Architecture: all
+          Depends: python3, python3-usb, usbutils
+          Maintainer: mystiquectl maintainers <noreply@users.noreply.github.com>
+          Description: Linux control utility for the DeepCool MYSTIQUE 360 LCD AIO cooler
+           mystiquectl repacks DeepCool's own official MYSTIQUE Electron control
+           application so it runs natively on Linux, backed by real Linux sensor
+           telemetry and a small USB bridge to the physical cooler.
+           .
+           This package does not include DeepCool's app.asar or the Electron
+           runtime; both are fetched/extracted separately after installation
+           (see \`mystiquectl update\` or install.sh), since DeepCool's own
+           bundle is proprietary and is never redistributed by this project.
+           .
+           Not affiliated with or endorsed by DeepCool.
+          CONTROL
+
+          cat > "$STAGE/DEBIAN/postinst" <<'POSTINST'
+          #!/bin/sh
+          set -e
+          echo "mystiquectl installed. The first 'mystiquectl' run will fetch the pinned"
+          echo "Electron runtime into ~/.local/share/mystiquectl automatically."
+          echo "You still need your own DeepCool app.asar -- see /usr/share/mystiquectl/README.md."
+          exit 0
+          POSTINST
+          chmod 0755 "$STAGE/DEBIAN/postinst"
+
+          DEB="mystiquectl_${VERSION}_all.deb"
+          dpkg-deb --root-owner-group --build "$STAGE" "$DEB"
+          echo "path=$DEB" >> "$GITHUB_OUTPUT"
+          dpkg-deb --info "$DEB"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            ${{ steps.tarball.outputs.path }}
+            ${{ steps.deb.outputs.path }}
+            packaging/PKGBUILD

@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  python-syntax:
+    name: Python syntax (py_compile)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Byte-compile top-level and impl/ Python sources
+        run: |
+          set -euo pipefail
+          files=$(find . -maxdepth 1 -name '*.py' -print; find impl -maxdepth 1 -name '*.py' -print)
+          if [ -z "$files" ]; then
+            echo "No Python files found under ./ or impl/ -- expected at least analyze.py, asar.py, e2e.py, map.py, shim.py, sweep.py, tour-frames.py and impl/*.py" >&2
+            exit 1
+          fi
+          echo "Checking:"
+          echo "$files"
+          # -q keeps py_compile quiet on success but it still fails (non-zero
+          # exit) and prints a traceback on the first syntax error it hits.
+          python3 -m py_compile $files
+          echo "OK: all Python files compiled cleanly."
+
+  shellcheck:
+    name: Shell lint (shellcheck, errors only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure shellcheck is available
+        run: |
+          set -euo pipefail
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y shellcheck
+          fi
+          shellcheck --version
+
+      - name: Lint top-level shell scripts (error severity only is fatal)
+        run: |
+          set -euo pipefail
+          files=$(find . -maxdepth 1 -name '*.sh')
+          if [ -z "$files" ]; then
+            echo "No shell scripts found -- expected run.sh, run-real.sh, run-only.sh, run-ui.sh, ui-tour.sh, ui-tour-real.sh, etc." >&2
+            exit 1
+          fi
+          echo "Checking:"
+          echo "$files"
+          # -S error: only error-severity findings fail the build. Warning-
+          # and info/style-level shellcheck findings are reported but do not
+          # fail CI.
+          shellcheck -S error $files
+
+  js-syntax:
+    name: JavaScript syntax (node --check)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Node is preinstalled on ubuntu-latest runners. These files only ever
+      # use Node built-ins (fs, path, net, os, child_process, events,
+      # crypto, module) -- there is no package.json / node_modules and no
+      # Electron-specific API surface at parse time -- so a plain `node
+      # --check` for syntax validity is legitimate even though, at runtime,
+      # they normally execute inside Electron's bundled Node (v23.3.13),
+      # not this Node.
+      - name: Syntax-check impl/, shim/, driver/ JavaScript
+        run: |
+          set -euo pipefail
+          node --version
+          files=$(find impl shim driver -maxdepth 1 -name '*.js')
+          if [ -z "$files" ]; then
+            echo "No JavaScript files found under impl/, shim/, driver/" >&2
+            exit 1
+          fi
+          for f in $files; do
+            echo "Checking $f"
+            node --check "$f"
+          done
+          echo "OK: all JavaScript files parsed cleanly."
+
+  # NOTE: e2e.py's full end-to-end suite is intentionally NOT run in CI.
+  # It spins up Xvfb plus a full Electron run and, for its "real hardware"
+  # section, needs an actual MYSTIQUE cooler plugged in over USB -- neither
+  # a display/GPU nor a USB device with vendor:product 3633:0009 is
+  # available on GitHub-hosted runners. It takes several minutes and
+  # remains a local/manual verification tool only; this workflow is
+  # limited to the static syntax/lint checks above.

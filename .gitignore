@@ -1,0 +1,26 @@
+# Vendored Electron binary -- install.sh fetches this at install/update
+# time from Electron's own official release, it is never committed.
+/.electron/
+
+# DeepCool's own app.asar and the pristine backup shim.py keeps next to it.
+# This repo ships no DeepCool code -- see README's Installation section.
+*.asar
+*.asar.orig
+*.asar.new
+*.asar.part
+
+# Runtime capture/output directories: recorded USB traffic, app logs, named
+# pipes, screenshots -- all generated locally by run*.sh / ui-tour*.sh / e2e.py.
+/capture/
+/capture-*/
+/shots/
+/shots-*/
+/shots2/
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor/OS noise
+.DS_Store
+*.swp
