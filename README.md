@@ -271,6 +271,8 @@ issue.
 
 GPL-3.0. See [LICENSE](LICENSE).
 
+Copyright (C) 2026 sowndev0106 and contributors.
+
 ---
 
 # Protocol / technical deep-dive
