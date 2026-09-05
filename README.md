@@ -627,6 +627,28 @@ and un-maximising first doesn't help. Drag the window across once, or use
 the compositor's own move-to-monitor shortcut, and it's remembered from
 then on.
 
+### The MYSTIQUE settings page can get stuck on "Situational mode", blank
+
+Symptom: the Personalization Settings dropdown shows a literal **"Situational
+mode"** label (not one of the three real options — Monitor Mode / Media Mode
+/ Recording mode) and the entire right-hand panel (LCD preview, Main Display
+Area, Style Type, Auxiliary Display Area) renders blank. It survives
+navigating away and back, and survives a full app restart.
+
+This is not a `mode` value problem — forcing `mode: 1` directly over IPC
+(confirmed with `mystique/get-device-info` reading it back correctly) did not
+fix the rendering, ruling out corrupted DeviceInfo on the device itself
+(which is the actual store for every other MYSTIQUE setting — see
+[The device has to remember](#the-device-has-to-remember)). What did fix it:
+deleting the app's own local Electron userData directory
+(`~/.config/DeepCool`) and letting it rebuild from scratch on the next
+launch. Back it up first if you want (`cp -a ~/.config/DeepCool
+~/.config/DeepCool.bak`) — nothing in it is load-bearing for cooler settings,
+only local app preferences (language, launch-at-startup, window position,
+locally-cached image thumbnails). Root-caused as far as "some renderer-side
+local state gets corrupted after enough IPC-driven testing," not narrowed
+further than that.
+
 ### Two upstream app quirks found during a full UI sweep
 
 A pass that drove every control in the app with real clicks (not just IPC)
