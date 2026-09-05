@@ -43,9 +43,14 @@ export DC_IMPL_DIR="${DC_IMPL_DIR:-$HERE/impl}"
 export DC_STUB="${DC_STUB:-edge_nativeclr,electron-edge-js,system_info,skia,wincapture,ffmplayer,opencv,ready.node,/C122/,/L122/,/L086/,/L136/,/CH690/,/L142/}"
 
 if [ ! -x "$ELECTRON_BIN" ]; then
-  echo "fetching electron $ELECTRON_VERSION (linux-x64) ..."
+  case "$(uname -m)" in
+    x86_64) ELECTRON_ARCH=x64 ;;
+    aarch64|arm64) ELECTRON_ARCH=arm64 ;;
+    *) echo "error: no known electron $ELECTRON_VERSION build for $(uname -m) -- set DC_ELECTRON_DIR to a manually-fetched build instead" >&2; exit 1 ;;
+  esac
+  echo "fetching electron $ELECTRON_VERSION (linux-$ELECTRON_ARCH) ..."
   mkdir -p "$ELECTRON_DIR"
-  url="https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-linux-x64.zip"
+  url="https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-linux-${ELECTRON_ARCH}.zip"
   curl -sSL -o "$ELECTRON_DIR/electron.zip" "$url"
   unzip -q -o "$ELECTRON_DIR/electron.zip" -d "$ELECTRON_DIR"
   rm -f "$ELECTRON_DIR/electron.zip"

@@ -74,7 +74,12 @@ documented in the [Protocol](#protocol--technical-deep-dive) section below.
 
 ## Requirements
 
-- Linux, x86_64.
+- Linux, `x86_64` or `aarch64`. `install.sh` and `run-only.sh` detect your
+  CPU architecture (`uname -m`) and fetch the matching official Electron
+  build; any other architecture needs a manually-supplied Electron build
+  via `DC_ELECTRON_DIR`. In practice the MYSTIQUE is a desktop CPU AIO
+  cooler, so `x86_64` is what almost everyone needs — `aarch64` support
+  exists mainly so the tool isn't silently wrong if you run it there.
 - `python3`, and the `python3-usb` distro package (pyusb + a libusb1
   backend) — only needed to talk to a **real** cooler via
   `impl/usb-bridge.py`. The synthetic-device capture/test path needs no USB
@@ -214,7 +219,7 @@ and prints the field ↔ command table.
 
 ### Checking it still works
 
-`./e2e.py` runs the whole thing and asserts on what comes out — 68 checks
+`./e2e.py` runs the whole thing and asserts on what comes out — 73 checks
 over nine phases, a bit over five minutes with real hardware attached
 (`--no-hw` skips the last phase and needs none):
 
@@ -224,40 +229,42 @@ preflight   8   shim installed, electron present, every impl module loads,
 clean       1   config backed up (to a location a reboot won't erase) and cleared
 flow        6   100+ IPC calls actually succeeded (not just attempted), no
                 unhandled JS error anywhere in the run, flow reached the end
-proto       8   frame checksums, both interfaces on their own endpoints,
+proto       9   frame checksums, both interfaces on their own endpoints,
                 0x12 then 0x14 leading the session, the brightness byte
                 against the documented re-encoding formula
 sensor      9   push started, system info non-null, gpuInfo a list, the
                 DMI-cache memory clock is actually half the DIMM rating
                 (not just nonzero), the SuperIO rails when one is bound
-media       6   DCLd records reassembled from the transfer stream, decoded
+media       7   DCLd records reassembled from the transfer stream, decoded
                 back to complete 480x640 JPEGs with matching checksums,
                 JPEG and GIF uploads checked separately
 encoding    7   the two 0x01 fraction bytes against their fitted formulas
-ui          8   four pages painted and visually distinct from each other,
+ui          9   four pages painted and visually distinct from each other,
                 window shown, splash dismissed
-hardware   15   real cooler: handshake, checksum repair, the guard on 0x14,
+hardware   17   real cooler: handshake, checksum repair, the guard on 0x14,
                 one init not eighty-four, every frame accepted, no fallback
 ```
 
 `--quick` skips the encoding sweep and the UI tour. Exit status is 0 only if
 every check passes.
 
-This suite was itself put through an adversarially-verified bug hunt
-(finders propose, three independent skeptics each try to refute, repeat
-until nothing new survives), which found 64 confirmed defects across this
-repo — roughly a third of them in `e2e.py` itself: checks that could not
-fail regardless of what the app did (an event name nothing emits, a log
-grep for a string the shim's own crash handlers ensure never appears, two
-real-hardware checks that passed on an empty capture, a media check whose
-`max()` across attempts hid a completely broken GIF path behind three
-working JPEG attempts, a UI-screenshot check that never compared its own
-screenshots, and `run-only.sh` always exiting 0 so a real crash was
-invisible to anything piping through it). All fixed; see git history for
-detail if you're curious. A related bug in `sweep.py`'s own `analyse()`
-could report progress and exit 0 from a *previous* run's leftover log —
-demonstrated against this repo's own checked-in capture at the time:
-`candidates served: 0 of 84` next to `PROGRESS: 75 frame(s)`, exit 0.
+This suite was itself put through an adversarially-verified bug hunt before
+this repo's first public commit (finders propose, three independent skeptics
+each try to refute, repeat until nothing new survives), which found 64
+confirmed defects across the codebase — roughly a third of them in `e2e.py`
+itself: checks that could not fail regardless of what the app did (an event
+name nothing emits, a log grep for a string the shim's own crash handlers
+ensure never appears, two real-hardware checks that passed on an empty
+capture, a media check whose `max()` across attempts hid a completely broken
+GIF path behind three working JPEG attempts, a UI-screenshot check that never
+compared its own screenshots, and `run-only.sh` always exiting 0 so a real
+crash was invisible to anything piping through it). All 64 were fixed before
+the code ever went public, so they don't show up as individual commits here —
+what you're reading now is already the fixed state. One is worth calling out
+on its own: a bug in `sweep.py`'s own `analyse()` could report progress and
+exit 0 from a *previous* run's leftover log — demonstrated at the time
+against a checked-in capture showing `candidates served: 0 of 84` next to
+`PROGRESS: 75 frame(s)`, exit 0.
 
 ## Contributing
 
@@ -564,8 +571,9 @@ they're real and reproducible, so they're documented here rather than left
 for someone else to rediscover:
 
 * **The "Rotate Screen" button silently clears "Gyroscopes are allowed".**
-  Per `COMMANDS.md`, `screenRotate` (command `0x02` payload byte 2) and
-  `gyroStatus` (byte 1) are documented as independent fields. In practice,
+  `screenRotate` (command `0x02` payload byte 2) and `gyroStatus` (byte 1)
+  are otherwise independent fields — nothing else in this port touches one
+  when the other changes. In practice,
   every click on Rotate Screen sends `gyroStatus:0` in the same
   `mystique/update-device-info` call that carries the rotation, regardless of
   what the gyro toggle was set to and without the toggle itself being

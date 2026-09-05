@@ -79,18 +79,24 @@ for extra in xdotool import; do
 done
 
 # ------------------------------------------------------------- electron --
+case "$(uname -m)" in
+  x86_64)        ELECTRON_ARCH=x64 ;;
+  aarch64|arm64) ELECTRON_ARCH=arm64 ;;
+  *) warn "no known electron $ELECTRON_VERSION build for $(uname -m) -- set DC_ELECTRON_DIR to a manually-fetched build"; ELECTRON_ARCH="" ;;
+esac
+
 CURRENT=""
 [ -f "$ELECTRON_DIR/version" ] && CURRENT="$(cat "$ELECTRON_DIR/version" 2>/dev/null || true)"
-if [ "$CURRENT" != "$ELECTRON_VERSION" ] || [ ! -x "$ELECTRON_DIR/electron" ]; then
-  log "fetching electron $ELECTRON_VERSION (linux-x64) into $ELECTRON_DIR ..."
+if [ -n "$ELECTRON_ARCH" ] && { [ "$CURRENT" != "$ELECTRON_VERSION" ] || [ ! -x "$ELECTRON_DIR/electron" ]; }; then
+  log "fetching electron $ELECTRON_VERSION (linux-$ELECTRON_ARCH) into $ELECTRON_DIR ..."
   rm -rf "$ELECTRON_DIR"
   mkdir -p "$ELECTRON_DIR"
-  url="https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-linux-x64.zip"
+  url="https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-linux-${ELECTRON_ARCH}.zip"
   curl -fsSL -o "$ELECTRON_DIR/electron.zip" "$url"
   unzip -q -o "$ELECTRON_DIR/electron.zip" -d "$ELECTRON_DIR"
   rm -f "$ELECTRON_DIR/electron.zip"
   log "electron $ELECTRON_VERSION ready"
-else
+elif [ -n "$ELECTRON_ARCH" ]; then
   log "electron $ELECTRON_VERSION already present"
 fi
 
