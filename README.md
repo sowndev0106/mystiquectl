@@ -71,6 +71,10 @@ documented in the [Protocol](#protocol--technical-deep-dive) section below.
   traffic to an actual MYSTIQUE over USB, with guards against the app's own
   destructive-by-default behavior (see
   [Talking to the real cooler](#talking-to-the-real-cooler)).
+- **One System Monitor value replaceable with anything you want** — a
+  smooth, no-flicker way to put a number on the panel the app was never
+  built to show (see
+  [Putting a custom number on the panel](#putting-a-custom-number-on-the-panel)).
 
 ## Screenshots
 
@@ -978,6 +982,38 @@ writes to it and shows what it wrote; the panel keeps the setting. This
 only matters when driving the app headlessly through IPC —
 `driver/sweep-settings.js` reads its baseline once and works from that,
 which is why sweeping settings is unaffected.
+
+### Putting a custom number on the panel
+
+The wire has no primitive for arbitrary content — every image/GIF path is
+"upload one static resource, the device plays it back on its own," and
+refreshing one on any kind of short interval means a visible loading
+transition on the panel every time (an earlier revision of this feature took
+that approach, screenshotting a webpage on an interval; it worked, but the
+loading transition made it unpleasant to actually live with). Command
+`0x01`'s 13 numeric slots (see [Frame grammar](#frame-grammar)) have no such
+limitation — they're pushed once a second and the panel just redraws
+instantly, no transition at all.
+
+`shim/usb-shim.js`'s `applyCustomSlotOverride()` rewrites one slot's bytes on
+the way out, after `impl/sensors.js` and everything that reads its real
+value (the Dashboard, Computer Configuration) have already used it, so
+nothing except this one number, on this one path, is affected. By default
+it's slot 2 — Auxiliary Display Area "System Monitor"'s memory-percentage
+value — read from a small JSON file, re-read on every push:
+
+```sh
+./claude-usage.sh 42            # slot 2 (memory%) shows 42 within ~1s
+./claude-usage.sh 42 1          # slot 1 (CPU usage%) instead
+./claude-usage.sh --clear       # back to the real value
+```
+
+There's no API this pulls a number from automatically — it's meant for
+something you check by hand (Claude Code's own `/usage`, say) and copy in.
+The panel's own icon and unit label for that slot are fixed in firmware and
+don't change to match — slot 2 will still draw its usual memory icon next to
+whatever number you put there. `DC_CLAUDE_USAGE_PATH` overrides the default
+file location (`~/.config/mystiquectl/claude-usage.json`).
 
 ## What the app needs faked
 

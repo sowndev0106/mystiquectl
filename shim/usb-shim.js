@@ -61,6 +61,42 @@ function bytes(data) {
 
 log('shim-loaded', { pid: process.pid, node: process.version, log: LOG });
 
+/* ------------------------------------------------- custom sensor-slot value */
+/* Command 0x01 (sensor push) is 13 slots of {uint16LE value, uint8 fraction}
+ * starting at payload offset 0 (frame byte 3) -- see COMMANDS.md. Slot 2
+ * (frame bytes 9-11) is what interface B's Auxiliary Display Area "System
+ * Monitor" mode shows as its memory-percentage value. Overwriting just this
+ * one slot, on the way out and after everything else (impl/sensors.js, the
+ * Dashboard, Computer Configuration) has already used the real value, lets
+ * one System Monitor number show something else entirely -- e.g. a manually
+ * updated Claude Code usage percentage -- without touching genuine sensor
+ * data anywhere else. DC_CLAUDE_USAGE_PATH overrides the default file path;
+ * the file is re-read on every push (once a second) so editing it takes
+ * effect immediately, no restart needed. */
+const CLAUDE_USAGE_PATH = process.env.DC_CLAUDE_USAGE_PATH
+  || path.join(require('os').homedir(), '.config', 'mystiquectl', 'claude-usage.json');
+
+function applyCustomSlotOverride(raw) {
+  if (!raw || raw.length < 45 || raw[2] !== 0x01) return false;
+  let cfg;
+  try { cfg = JSON.parse(fs.readFileSync(CLAUDE_USAGE_PATH, 'utf8')); } catch (e) { return false; }
+  if (!cfg || !Number.isFinite(cfg.percent)) return false;
+  const slot = Number.isInteger(cfg.slot) ? cfg.slot : 2;
+  const off = 3 + slot * 3;
+  if (slot < 0 || slot > 12 || off + 3 > raw.length - 8) return false;
+  const pct = Math.max(0, Math.min(100, Math.round(cfg.percent)));
+  raw.writeUInt16LE(pct, off);
+  raw.writeUInt8(0, off + 2);
+  /* The frame's own checksum is now stale for the bytes actually being
+   * sent -- recompute it the same way impl/usb-bridge.py's repair_checksum
+   * already does for the app's own broken sensor-push checksum, so this
+   * works whether or not DC_REAL_USB is also fixing that separately. */
+  let sum = 0;
+  for (let i = 0; i < raw.length - 2; i++) sum += raw[i];
+  raw.writeUInt16LE(sum & 0xFFFF, raw.length - 2);
+  return true;
+}
+
 /* --------------------------------------------------- Windows path shim */
 /* The app builds paths with backslashes ("~/.config/DeepCool\\Pictures\\...").
  * On Windows those are separators; on Linux they are ordinary filename
@@ -1368,6 +1404,7 @@ function mkWebDevice(pid, index) {
            * keep answering with the stored serial, not with its own empty
            * request payload. */
           if (raw[2] !== 0x12) deviceState.set(raw[2], Buffer.from(raw.subarray(3, 42)));
+          if (applyCustomSlotOverride(raw)) b.hex = raw.toString('hex');
         }
       }
       if (process.env.DC_REAL_USB && b && b.hex) {
