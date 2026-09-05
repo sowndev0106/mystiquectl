@@ -1927,6 +1927,83 @@ if (!global.__dcDriver) {
   }, delay);
 }
 
+/* --------------------------------------------------------- web-on-LCD UI */
+/* DC_WEB_LCD=1 adds a small floating widget to the app's own window (via
+ * executeJavaScript, not by touching any of DeepCool's original renderer
+ * code) that lets you type a URL and have it periodically screenshotted
+ * onto the panel through impl/web-lcd.js. Off by default; run-real.sh's
+ * DC_UI=1 branch turns it on. */
+if (process.env.DC_WEB_LCD === '1' && !global.__dcWebLcd) {
+  global.__dcWebLcd = true;
+  try {
+    const implDir = process.env.DC_IMPL_DIR;
+    if (!implDir) throw new Error('DC_IMPL_DIR not set');
+    const webLcd = require(implDir + '/web-lcd.js');
+    webLcd.install(log);
+
+    const { app } = require('electron');
+    const OVERLAY_SCRIPT = `(() => {
+      if (window.__dcWebLcdOverlay) return;
+      window.__dcWebLcdOverlay = true;
+      const PORT = ${webLcd.PORT};
+      const base = 'http://127.0.0.1:' + PORT;
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'position:fixed;right:8px;bottom:8px;z-index:2147483647;' +
+        'font:12px system-ui,sans-serif;background:#0b1220;color:#e6f1ff;' +
+        'border:1px solid #2a3a55;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.4);' +
+        'width:220px;overflow:hidden;';
+      wrap.innerHTML = '<div id="dcwl-head" style="padding:6px 8px;cursor:pointer;' +
+        'background:#132038;display:flex;justify-content:space-between;align-items:center;">' +
+        '<span>mystiquectl &middot; web on panel</span><span id="dcwl-caret">&#9662;</span></div>' +
+        '<div id="dcwl-body" style="padding:8px;display:none;">' +
+        '<input id="dcwl-url" placeholder="https://example.com" style="width:100%;box-sizing:border-box;' +
+        'margin-bottom:6px;padding:4px;border-radius:4px;border:1px solid #2a3a55;background:#0b1220;color:#e6f1ff;">' +
+        '<div style="display:flex;gap:4px;align-items:center;margin-bottom:6px;">' +
+        '<span>every</span><input id="dcwl-interval" type="number" min="5" value="15" style="width:48px;' +
+        'padding:4px;border-radius:4px;border:1px solid #2a3a55;background:#0b1220;color:#e6f1ff;"><span>s</span></div>' +
+        '<div style="display:flex;gap:6px;">' +
+        '<button id="dcwl-go" style="flex:1;padding:4px;border-radius:4px;border:0;background:#1fae7a;color:#03140c;cursor:pointer;">Show on panel</button>' +
+        '<button id="dcwl-stop" style="padding:4px 8px;border-radius:4px;border:1px solid #2a3a55;background:transparent;color:#e6f1ff;cursor:pointer;">Stop</button>' +
+        '</div><div id="dcwl-status" style="margin-top:6px;color:#8ea3c4;"></div></div>';
+      document.body.appendChild(wrap);
+      const body = wrap.querySelector('#dcwl-body');
+      const caret = wrap.querySelector('#dcwl-caret');
+      wrap.querySelector('#dcwl-head').onclick = () => {
+        const open = body.style.display !== 'none';
+        body.style.display = open ? 'none' : 'block';
+        caret.innerHTML = open ? '&#9662;' : '&#9652;';
+      };
+      const status = wrap.querySelector('#dcwl-status');
+      const setStatus = (t) => { status.textContent = t; };
+      wrap.querySelector('#dcwl-go').onclick = () => {
+        const url = wrap.querySelector('#dcwl-url').value.trim();
+        const intervalSeconds = Number(wrap.querySelector('#dcwl-interval').value) || 15;
+        if (!url) return setStatus('enter a URL first');
+        setStatus('starting...');
+        fetch(base + '/set', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, intervalSeconds })
+        }).then((r) => r.json()).then((r) => setStatus(r.ok ? 'live, refreshing every ' + intervalSeconds + 's' : 'error: ' + r.error))
+          .catch((e) => setStatus('error: ' + e));
+      };
+      wrap.querySelector('#dcwl-stop').onclick = () => {
+        fetch(base + '/stop', { method: 'POST' }).then(() => setStatus('stopped')).catch(() => {});
+      };
+    })();`;
+
+    app.on('web-contents-created', (_e, wc) => {
+      if (wc.getType && wc.getType() !== 'window') return;
+      wc.on('did-finish-load', () => {
+        if (wc.__dcWebLcdCapture) return;
+        wc.executeJavaScript(OVERLAY_SCRIPT).catch((e) => log('web-lcd.inject-failed', { error: String(e) }));
+      });
+    });
+    log('web-lcd.installed', { port: webLcd.PORT });
+  } catch (e) {
+    log('web-lcd.install-failed', { error: String((e && e.stack) || e) });
+  }
+}
+
 /* --------------------------------------------------------------- exports */
 /* Mirrors node-usb's dist/index.js export shape. */
 
