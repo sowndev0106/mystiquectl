@@ -72,6 +72,74 @@ documented in the [Protocol](#protocol--technical-deep-dive) section below.
   destructive-by-default behavior (see
   [Talking to the real cooler](#talking-to-the-real-cooler)).
 
+## Screenshots
+
+All of these are DeepCool's own official app UI, running unmodified on
+Linux through this project's shim — nothing here is a custom interface.
+
+<table>
+<tr>
+<td width="50%">
+
+**Dashboard** — live CPU/GPU/memory/storage/network, sourced from real Linux
+sensors (RAPL, hwmon, `nvidia-smi`, `/proc`) instead of the Windows-only
+services the app expects.
+
+<img src="docs/screenshots/dashboard.png" alt="Dashboard with live CPU and GPU tiles">
+
+</td>
+<td width="50%">
+
+**Device card** — genuine tachometer numbers (`0 RPM` at rest here, real
+RPM once a fan I/O interface is picked), not the raw
+`{"Name":"SYS_FAN1","Value":0,"Unit":"RPM"}` text this used to render before
+the [fan-list shape fix](#the-lcds-fanpump-rpm-slots).
+
+<img src="docs/screenshots/device-list.png" alt="Device list showing the MYSTIQUE card with clean RPM readouts">
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+**MYSTIQUE settings** — Idle Screen, Brightness, Rotation, RGB Sync and I/O
+Interface controls alongside a live LCD preview that mirrors the real panel.
+
+<img src="docs/screenshots/mystique-settings.png" alt="MYSTIQUE settings page with the live LCD preview">
+
+</td>
+<td width="50%">
+
+**Display layout customization** — Style Type set to *Ring*, Auxiliary
+Display Area to *Voltage Mode*; the preview updates live as each control
+changes, matching the exact bytes sent on the wire.
+
+<img src="docs/screenshots/display-area-ring.png" alt="MYSTIQUE settings with Ring style and voltage rails selected">
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+**Media Mode** — a real image uploaded through the app's own crop dialog
+(`testmedia/test.jpg`), now showing on the LCD preview and selected as the
+active thumbnail.
+
+<img src="docs/screenshots/media-mode.png" alt="Media Mode after uploading and confirming an image">
+
+</td>
+<td width="50%">
+
+**Computer Configuration** — real CPU, GPU, motherboard and disk identity,
+via `impl/sysinfo.js` and the DMI cache in place of the Windows-only system
+info service.
+
+<img src="docs/screenshots/computer-configuration.png" alt="Computer Configuration page with real machine details">
+
+</td>
+</tr>
+</table>
+
 ## Requirements
 
 - Linux, `x86_64` or `aarch64`. `install.sh` and `run-only.sh` detect your
