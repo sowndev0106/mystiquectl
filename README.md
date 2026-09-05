@@ -71,10 +71,6 @@ documented in the [Protocol](#protocol--technical-deep-dive) section below.
   traffic to an actual MYSTIQUE over USB, with guards against the app's own
   destructive-by-default behavior (see
   [Talking to the real cooler](#talking-to-the-real-cooler)).
-- **A webpage on the panel** — a small overlay added to the app's own window
-  lets you type a URL and have it periodically screenshotted onto the LCD
-  (see [Showing a webpage on the panel](#showing-a-webpage-on-the-panel) for
-  what this can and can't do).
 
 ## Screenshots
 
@@ -960,41 +956,6 @@ writes to it and shows what it wrote; the panel keeps the setting. This
 only matters when driving the app headlessly through IPC —
 `driver/sweep-settings.js` reads its baseline once and works from that,
 which is why sweeping settings is unaffected.
-
-### Showing a webpage on the panel
-
-`DC_WEB_LCD=1` (on by default under `run-real.sh`'s `DC_UI=1` desktop path,
-off everywhere else) adds a small floating widget to the app's own window —
-bottom-right corner, labelled `mystiquectl · web on panel` — where you can
-type a URL and an interval and have that page pushed to the LCD.
-
-**This is not a live browser on the panel.** The wire protocol has no
-raw-framebuffer or streaming primitive at all — every image/GIF path,
-including this one, is "upload one static resource, the device plays it back
-on its own." So "showing a website" here means: render the page in a hidden
-`BrowserWindow` sized to the panel's native 480x640, `capturePage()` it,
-JPEG-encode it, and push it through the exact same
-`mystique/upload-image` → `mystique/update-motion-mode-screen` IPC calls the
-app's own crop dialog uses (invoked directly via the `ipcMain._invokeHandlers`
-map, the same technique `DC_DRIVER` uses — see
-[Driving the app headlessly](#driving-the-app-headlessly)), on a repeating
-timer. Expect a refresh every 5-30 seconds depending on the page and the
-interval you set, not smooth video.
-
-The overlay talks to a tiny HTTP server (`impl/web-lcd.js`, loopback-only,
-port `DC_WEB_LCD_PORT` / default `47474`) via plain `fetch()` calls
-(`POST /set {url, intervalSeconds}`, `POST /stop`, `GET /status`), so it
-works regardless of the app window's own node-integration settings and
-never touches any of DeepCool's original renderer code. Only `http://` and
-`https://` URLs are accepted.
-
-Each cycle uploads a new image and then removes **only the previous cycle's
-own upload** — tracked locally by this feature, never by guessing from the
-device's resource list — so the panel's media library settles at "however
-many images you already had, plus one" instead of growing without bound;
-anything you uploaded yourself through the app's own UI is never touched.
-Set `DC_WEB_LCD_DEBUG=1` for a verbose per-cycle log of the resource-list
-diff if you're debugging this yourself.
 
 ## What the app needs faked
 

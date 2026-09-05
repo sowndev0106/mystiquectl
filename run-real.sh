@@ -112,11 +112,6 @@ if [ "${DC_UI:-0}" = "1" ]; then
   export DC_IMPL_DIR="${DC_IMPL_DIR:-$HERE/impl}"
   export DC_ANNOUNCE_EVERY="${DC_ANNOUNCE_EVERY:-999999}"
   export DC_STUB="${DC_STUB:-edge_nativeclr,electron-edge-js,system_info,skia,wincapture,ffmplayer,opencv,ready.node,/C122/,/L122/,/L086/,/L136/,/CH690/,/L142/}"
-  # On by default only for the interactive real-hardware desktop path -- adds
-  # a small floating widget to the app's own window (impl/web-lcd.js) for
-  # pushing an arbitrary webpage to the panel as a periodically-refreshed
-  # screenshot. DC_WEB_LCD=0 turns it off.
-  export DC_WEB_LCD="${DC_WEB_LCD:-1}"
   echo "display     : $DISPLAY"
   # This branch used a literal "$HERE/.electron/electron", ignoring
   # DC_ELECTRON_DIR even though run-only.sh (the non-UI branch, two lines
