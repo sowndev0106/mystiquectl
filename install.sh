@@ -194,6 +194,16 @@ DESKTOP
 have update-desktop-database && update-desktop-database "$DATA_DIR/applications" >/dev/null 2>&1 || true
 log "menu entry installed: $DATA_DIR/applications/mystiquectl.desktop"
 
+# ------------------------------------------------------------- autostart --
+# On, unless `mystiquectl autostart off` left its marker (the path is
+# mystiquectl's OFF_MARKER) -- updates and reinstalls must not switch it
+# back on behind your back.
+if [ -e "${XDG_CONFIG_HOME:-$HOME/.config}/mystiquectl/autostart-off" ]; then
+  log "autostart is off ('mystiquectl autostart on' starts it hidden in the tray at every login)"
+else
+  "$HERE/mystiquectl" autostart on
+fi
+
 log ""
 log "done. Run 'mystiquectl' (or pick mystiquectl in your app menu) to start the app against your real cooler."
 log "Run '$HERE/install.sh update' (or 'mystiquectl update') any time to pull the latest source and refresh electron."

@@ -194,15 +194,36 @@ Either way you get a `mystiquectl` command in `~/.local/bin` and a
 **mystiquectl** entry in your desktop's app menu:
 
 ```sh
-mystiquectl                 # start the app against your real cooler
+mystiquectl                 # start the app (or show its window if it's already running)
+mystiquectl --background    # start it hidden, in the tray
+mystiquectl autostart off   # don't start at login (on / status too)
 mystiquectl update          # pull the latest source, refresh electron/deps/menu entry
-mystiquectl uninstall       # remove launcher, menu entry, icon; restore the original app.asar
+mystiquectl uninstall       # stop it; remove launcher, menu entry, icon, autostart;
+                            # restore the original app.asar
 ```
 
+**It keeps running in the background.** Closing the window only hides it
+to the tray; the cooler keeps getting live sensor readings. Click the tray
+icon, or start `mystiquectl` again, to bring the window back; the tray
+menu's *Exit* quits it for real. On GNOME the tray icon needs the
+AppIndicator extension; without it, starting `mystiquectl` again is the
+way back to the window.
+
+**It starts at login**, hidden in the tray, unless you run
+`mystiquectl autostart off` — that choice sticks across updates and
+reinstalls. Autostart is a `~/.config/autostart/mystiquectl.desktop` entry
+(GNOME, KDE, XFCE, …) and, because sway ignores those, an `exec` line in
+your existing `~/.config/sway/config`, between
+`# >>> mystiquectl autostart >>>` / `# <<< mystiquectl autostart <<<`
+markers. The config is backed up to `config.mystiquectl.bak` before the
+first change, and a sway config that doesn't exist is never created. The
+"auto start" switch inside DeepCool's own settings page has no effect on
+Linux; use `mystiquectl autostart` instead.
+
 `uninstall` deletes the checkout too when the `curl | bash` path created it;
-a clone of your own is left where it is. Started from the app menu, a failed
-start (cooler unplugged, shim missing) shows up as a desktop notification,
-with the full log in `~/.local/state/mystiquectl/launch.log`.
+a clone of your own is left where it is. Started from the app menu or at
+login, a failed start (cooler unplugged, shim missing) shows up as a desktop
+notification, with the full log in `~/.local/state/mystiquectl/launch.log`.
 
 `install.sh` fetches the pinned Electron 23.3.13 Linux build straight from
 [Electron's own GitHub releases](https://github.com/electron/electron/releases/download/v23.3.13/electron-v23.3.13-linux-x64.zip)
