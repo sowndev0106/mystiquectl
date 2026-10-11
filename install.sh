@@ -193,7 +193,7 @@ Comment=Control the DeepCool MYSTIQUE LCD cooler (unofficial)
 Exec="$BIN_DIR/mystiquectl"
 Icon=mystiquectl
 Terminal=false
-Categories=Utility;System;HardwareSettings;
+Categories=Settings;HardwareSettings;
 Keywords=deepcool;mystique;cooler;lcd;aio;
 StartupWMClass=DeepCool
 DESKTOP
