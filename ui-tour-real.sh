@@ -8,13 +8,20 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOCK="${DC_USB_SOCK:-/tmp/dc-usb-bridge.sock}"
 
 lsusb 2>/dev/null | grep -q '3633:0009' || { echo "no MYSTIQUE on the bus" >&2; exit 1; }
+# The lock run-real.sh takes for as long as the app it starts runs (it's
+# usually up in the tray, from mystiquectl): killing the bridge below would
+# cut that app off the cooler. Nothing started here inherits the lock.
+if command -v flock >/dev/null; then
+  exec 9>"$SOCK.lock"
+  flock -n 9 || { echo "error: mystiquectl's app is running (or starting) and holds the cooler -- quit it from the tray first" >&2; exit 1; }
+fi
 for p in $(pgrep -x python3); do tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null | grep -q usb-brid && kill $p; done
 sleep 0.4
 # A killed bridge leaves its socket file behind, and the wait loop below only
 # looks for the file -- so without this it returns before the new bridge has
 # bound, and the first request finds nothing listening.
 rm -f "$SOCK"
-python3 "$HERE/impl/usb-bridge.py" "$SOCK" > "${DC_BRIDGE_LOG:-/tmp/dc-bridge.log}" 2>&1 &
+python3 "$HERE/impl/usb-bridge.py" "$SOCK" > "${DC_BRIDGE_LOG:-/tmp/dc-bridge.log}" 2>&1 9>&- &
 BRIDGE=$!
 trap 'kill $BRIDGE 2>/dev/null' EXIT
 for _ in $(seq 30); do [ -S "$SOCK" ] && break; sleep 0.1; done
@@ -47,4 +54,4 @@ export DC_PIDS="${DC_PIDS:-0x0009}"
 export DC_SHOTDIR="${DC_SHOTDIR:-$HERE/shots-real}"
 # Not exec: that would replace this shell and lose the EXIT trap that
 # stops the bridge.
-"$HERE/ui-tour.sh" "$@"
+"$HERE/ui-tour.sh" "$@" 9>&-

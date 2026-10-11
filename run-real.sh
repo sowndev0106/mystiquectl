@@ -51,11 +51,39 @@ app_running() {
   [ -S "$SOCK" ] || return 1
   local p args
   for p in $(pgrep -x electron); do
-    args=" $(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null) " || continue
+    args=" $(tr '\0' ' ' 2>/dev/null < "/proc/$p/cmdline") " || continue
     case "$args" in *" --type="*) continue ;; esac
-    case "$args" in *" $DC_UI_ASAR "*) return 0 ;; esac
+    case "$args" in *" $DC_UI_ASAR "*) APP_PID="$p"; return 0 ;; esac
   done
   return 1
+}
+
+# A second electron on the same app.asar trips the app's own single-instance
+# lock: the running one shows its window, this one exits within a couple of
+# seconds. Restarting the bridge, as below, would instead cut the running app
+# off the cooler. The shim in this second one logs too, so it gets a
+# throwaway capture dir rather than the running app's -- which is also why a
+# failure is shown here before that dir goes.
+hand_over() {
+  # Asked to show its window in its first few seconds -- a click on the menu
+  # entry right after autostart started it -- the app shows a window that
+  # isn't loaded yet and its own -autoRun startup (done ~6s in) leaves it
+  # hidden. So wait until it has been up DC_HANDOVER_SETTLE seconds.
+  local age settle="${DC_HANDOVER_SETTLE:-10}"
+  age="$(ps -o etimes= -p "$APP_PID" 2>/dev/null | tr -d ' ')"
+  if [ -n "$age" ] && [ "$age" -lt "$settle" ]; then
+    echo "the app is still starting -- showing its window in $(( settle - age ))s"
+    sleep $(( settle - age ))
+  fi
+  echo "already running -- showing its window"
+  DC_CAPTURE_DIR="$(mktemp -d)"; export DC_CAPTURE_DIR
+  trap 'rm -rf "$DC_CAPTURE_DIR"' EXIT
+  export DC_REAL_USB="$SOCK" DC_PIDS="${DC_PIDS:-0x0009}"
+  ui_env
+  "$DC_ELECTRON_BIN" --no-sandbox "$DC_UI_ASAR" > "$DC_CAPTURE_DIR/app.log" 2>&1 9>&-
+  local rc=$?
+  [ "$rc" = 0 ] || { echo "error: handing over to the running app failed (electron exit $rc):" >&2; tail -n 20 "$DC_CAPTURE_DIR/app.log" >&2; }
+  exit "$rc"
 }
 
 if app_running; then
@@ -67,18 +95,33 @@ if app_running; then
     echo "already running"
     exit 0
   fi
-  # A second electron on the same app.asar trips the app's own single-instance
-  # lock: the running one shows its window, this one exits within a couple of
-  # seconds. Restarting the bridge, as below, would instead cut the running
-  # app off the cooler. The shim in this second one logs too, so it gets a
-  # throwaway capture dir rather than the running app's.
-  echo "already running -- showing its window"
-  DC_CAPTURE_DIR="$(mktemp -d)"; export DC_CAPTURE_DIR
-  trap 'rm -rf "$DC_CAPTURE_DIR"' EXIT
-  export DC_REAL_USB="$SOCK" DC_PIDS="${DC_PIDS:-0x0009}"
-  ui_env
-  "$DC_ELECTRON_BIN" --no-sandbox "$DC_UI_ASAR" > "$DC_CAPTURE_DIR/app.log" 2>&1
-  exit
+  hand_over
+fi
+
+# Not up yet is not the same as nobody starting it: from here to a running
+# app takes a few seconds (bridge, serial read, electron), and a second run in
+# that window -- autostart racing a click on the menu entry -- would kill the
+# first one's bridge below and leave its app with none. So only one run at a
+# time gets past this lock, held for as long as this script runs. Nothing it
+# starts inherits it (9>&-): a lingering child must not block the next start.
+if command -v flock >/dev/null; then
+  exec 9>"$SOCK.lock"
+  if ! flock -n 9; then
+    if [ "${DC_UI:-0}" != "1" ]; then
+      echo "error: another run (mystiquectl, or ui-tour-real.sh) holds the cooler -- let it finish or quit it first" >&2
+      exit 1
+    fi
+    if [ "${DC_BACKGROUND:-0}" = "1" ]; then
+      echo "already starting"
+      exit 0
+    fi
+    for _ in $(seq $(( ${DC_HANDOVER_WAIT:-20} * 4 ))); do
+      app_running && hand_over
+      sleep 0.25
+    done
+    echo "error: another run holds the cooler and its app didn't come up within ${DC_HANDOVER_WAIT:-20}s" >&2
+    exit 1
+  fi
 fi
 
 # pkill -f matches the WHOLE command line of any process, not just a
@@ -94,7 +137,7 @@ sleep 0.4
 # bound, the serial read finds nothing listening, and the app spends the run
 # re-initialising once a second.
 rm -f "$SOCK"
-python3 "$HERE/impl/usb-bridge.py" "$SOCK" > "${DC_BRIDGE_LOG:-/tmp/dc-bridge.log}" 2>&1 &
+python3 "$HERE/impl/usb-bridge.py" "$SOCK" > "${DC_BRIDGE_LOG:-/tmp/dc-bridge.log}" 2>&1 9>&- &
 BRIDGE=$!
 trap 'kill $BRIDGE 2>/dev/null' EXIT
 for _ in $(seq 30); do [ -S "$SOCK" ] && break; sleep 0.1; done
@@ -193,7 +236,7 @@ if [ "${DC_UI:-0}" = "1" ]; then
   # -autoRun is the app's own start-at-login switch (what it registers with
   # setLoginItemSettings on Windows): it comes up with only its tray icon.
   AUTORUN=(); [ "${DC_BACKGROUND:-0}" = "1" ] && AUTORUN=(-autoRun)
-  "$DC_ELECTRON_BIN" --no-sandbox "$DC_UI_ASAR" "${AUTORUN[@]}" > "$DC_CAPTURE_DIR/app.log" 2>&1
+  "$DC_ELECTRON_BIN" --no-sandbox "$DC_UI_ASAR" "${AUTORUN[@]}" > "$DC_CAPTURE_DIR/app.log" 2>&1 9>&-
 else
-  "$HERE/run-only.sh" "${1:-60}"
+  "$HERE/run-only.sh" "${1:-60}" 9>&-
 fi

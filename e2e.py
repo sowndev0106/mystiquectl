@@ -112,6 +112,18 @@ def preflight():
     for mod in ('sensors', 'sysinfo', 'sensor-service', 'readynode'):
         r = run(['node', '-e', 'require("%s/impl/%s.js")' % (HERE, mod)])
         check('preflight', 'impl/%s.js loads' % mod, r.returncode == 0, r.stderr.strip()[:120])
+    # mystiquectl's own app, usually hidden in the tray: run-real.sh refuses to
+    # take the cooler from it, so the hardware phase would fail for no
+    # hardware reason. Chromium rewrites its cmdline into one string.
+    held = []
+    for pid in run(['pgrep', '-x', 'electron']).stdout.split():
+        try:
+            args = ' %s ' % open('/proc/%s/cmdline' % pid, 'rb').read().replace(b'\0', b' ').decode(errors='replace')
+        except OSError:
+            continue
+        if ' --type=' not in args and ' %s ' % ASAR in args:
+            held.append(pid)
+    check('preflight', 'mystiquectl app not running (quit it from the tray)', not held, ' '.join(held))
     r = run(['pgrep', '-af', '[d]eepcool-cli|[d]eepcool-digital-linux'])
     check('preflight', 'no third-party deepcool daemon holding the device',
           r.returncode != 0, r.stdout.strip()[:120])
