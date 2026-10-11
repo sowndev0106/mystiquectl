@@ -178,8 +178,11 @@ curl -fsSL https://raw.githubusercontent.com/sowndev0106/mystiquectl/main/instal
 ```
 
 That clones the repo into `~/.local/share/mystiquectl` (set `MYSTIQUECTL_DIR`
-to put it elsewhere) and runs `install.sh` from there. Or clone and run it
-yourself:
+to put it elsewhere), runs `install.sh` from there, and starts the app once
+it's done — if the cooler is plugged in and your `app.asar` is in place.
+Running the same command again later updates whatever needs it (new commits,
+a different Electron, missing packages) and starts the app again. Or clone and
+run it yourself, which installs the same way but doesn't start the app:
 
 ```sh
 git clone https://github.com/sowndev0106/mystiquectl.git
@@ -187,11 +190,24 @@ cd mystiquectl
 ./install.sh
 ```
 
+Either way you get a `mystiquectl` command in `~/.local/bin` and a
+**mystiquectl** entry in your desktop's app menu:
+
+```sh
+mystiquectl                 # start the app against your real cooler
+mystiquectl update          # pull the latest source, refresh electron/deps/menu entry
+mystiquectl uninstall       # remove launcher, menu entry, icon; restore the original app.asar
+```
+
+`uninstall` deletes the checkout too when the `curl | bash` path created it;
+a clone of your own is left where it is. Started from the app menu, a failed
+start (cooler unplugged, shim missing) shows up as a desktop notification,
+with the full log in `~/.local/state/mystiquectl/launch.log`.
+
 `install.sh` fetches the pinned Electron 23.3.13 Linux build straight from
 [Electron's own GitHub releases](https://github.com/electron/electron/releases/download/v23.3.13/electron-v23.3.13-linux-x64.zip)
 (MIT-licensed, an official redistribution channel) into `.electron/` — it is
-never committed to this repo. Run `install.sh update` from your checkout later
-to pull the latest source and refresh it.
+never committed to this repo.
 
 ### Getting `app.asar`
 

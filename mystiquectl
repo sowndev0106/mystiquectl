@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# mystiquectl -- start the app, or look after this install.
+#
+#   mystiquectl [args]            start the app on your desktop, against the
+#                                 real cooler (DC_UI=1 run-real.sh [args])
+#   mystiquectl update            pull the latest source, refresh electron,
+#                                 deps, launcher and menu entry
+#   mystiquectl uninstall [-y]    remove the launcher, menu entry and icon,
+#                                 restore the pristine app.asar, and delete
+#                                 this checkout if install.sh's curl | bash
+#                                 path created it (a clone of your own stays)
+#   mystiquectl help
+#
+# ~/.local/bin/mystiquectl, written by install.sh, just execs this file.
+set -uo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+BIN_DIR="$HOME/.local/bin"
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
+LAUNCHER="$BIN_DIR/mystiquectl"
+DESKTOP_FILE="$DATA_DIR/applications/mystiquectl.desktop"
+ICON_FILE="$DATA_DIR/icons/hicolor/scalable/apps/mystiquectl.svg"
+ASAR="${DC_ASAR:-$HOME/.var/app/com.usebottles.bottles/data/bottles/bottles/Local/drive_c/DeepCool/resources/app.asar}"
+
+usage() { sed -n '2,12s/^# \{0,1\}//p' "$HERE/mystiquectl"; }
+
+run() {
+  # From a terminal, behave exactly like running run-real.sh by hand.
+  if [ -t 2 ]; then
+    exec env DC_UI=1 "$HERE/run-real.sh" "$@"
+  fi
+  # Started from the app menu (or by install.sh): nobody sees stderr, so keep
+  # it in a log and turn a failed start into a desktop notification.
+  local log="${XDG_STATE_HOME:-$HOME/.local/state}/mystiquectl/launch.log"
+  mkdir -p "$(dirname "$log")"
+  env DC_UI=1 "$HERE/run-real.sh" "$@" >"$log" 2>&1
+  local rc=$?
+  if [ "$rc" != 0 ]; then
+    local msg
+    msg="$(grep -m1 '^error:' "$log" || tail -n1 "$log")"
+    if command -v notify-send >/dev/null 2>&1; then
+      notify-send -i mystiquectl "mystiquectl could not start" "${msg#error: }"$'\n'"Full log: $log"
+    fi
+  fi
+  return "$rc"
+}
+
+uninstall() {
+  local yes="" managed="" what=()
+  [ "${1:-}" = "-y" ] && yes=1
+  # Only the checkout install.sh's curl | bash path cloned is ours to delete.
+  local default_dir="${MYSTIQUECTL_DIR:-$DATA_DIR/mystiquectl}"
+  [ -d "$default_dir" ] && [ "$(cd "$default_dir" && pwd)" = "$HERE" ] && managed=1
+
+  # The launcher may belong to a different checkout; leave that one alone.
+  grep -qF "$HERE/" "$LAUNCHER" 2>/dev/null && what+=("launcher      $LAUNCHER")
+  [ -e "$DESKTOP_FILE" ] && what+=("menu entry    $DESKTOP_FILE")
+  [ -e "$ICON_FILE" ]    && what+=("icon          $ICON_FILE")
+  grep -qa DC_CAPTURE_DIR "$ASAR" 2>/dev/null && what+=("shim          restore the original $ASAR")
+  [ -n "$managed" ] && what+=("checkout      $HERE (with its electron)")
+
+  if [ "${#what[@]}" = 0 ]; then echo "nothing to uninstall"; return 0; fi
+  echo "this will remove:"; printf '  %s\n' "${what[@]}"
+  [ -z "$managed" ] && echo "and keep $HERE (not created by install.sh)"
+  if [ -z "$yes" ]; then
+    if ! { : </dev/tty; } 2>/dev/null; then
+      echo "error: no terminal to confirm on -- re-run as: mystiquectl uninstall -y" >&2; return 1
+    fi
+    local ans; read -r -p "go ahead? [y/N] " ans </dev/tty
+    case "$ans" in y|Y|yes) ;; *) echo "cancelled"; return 1 ;; esac
+  fi
+
+  if grep -qa DC_CAPTURE_DIR "$ASAR" 2>/dev/null; then
+    DC_ASAR="$ASAR" "$HERE/shim.py" uninstall || echo "warning: could not restore app.asar -- see above; continuing" >&2
+  fi
+  grep -qF "$HERE/" "$LAUNCHER" 2>/dev/null && rm -f "$LAUNCHER"
+  rm -f "$DESKTOP_FILE" "$ICON_FILE"
+  command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$DATA_DIR/applications" >/dev/null 2>&1
+  # Last: this script is running from inside it.
+  [ -n "$managed" ] && rm -rf "$HERE"
+  echo "uninstalled."
+}
+
+case "${1:-}" in
+  update)          shift; exec "$HERE/install.sh" update "$@" ;;
+  uninstall)       shift; uninstall "$@" ;;
+  help|-h|--help)  usage ;;
+  *)               run "$@" ;;
+esac
