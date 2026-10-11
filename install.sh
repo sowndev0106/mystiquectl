@@ -5,6 +5,9 @@
 #   ./install.sh install
 #   ./install.sh update       git pull + refresh electron + re-check deps
 #
+# Piped from curl it first clones the repo into ~/.local/share/mystiquectl
+# (override with MYSTIQUECTL_DIR) and re-runs itself from there.
+#
 # Safe to run repeatedly either way. What it does:
 #   - checks for the system packages the real-hardware path needs
 #     (python3, python3-usb, usbutils) and offers to install them
@@ -19,8 +22,31 @@
 # where to get your own copy.
 
 set -euo pipefail
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACTION="${1:-install}"
+
+# Piped in (curl ... | bash) there is no BASH_SOURCE and no checkout around
+# this script -- only this one file was downloaded. Resolving HERE the usual
+# way then silently lands on the current directory, and everything below
+# (electron, the launcher's run-real.sh path) points somewhere that holds no
+# source. So clone the repo first and re-run the copy inside it.
+SELF="${BASH_SOURCE[0]:-}"
+if [ -z "$SELF" ] || [ ! -f "$(dirname "$SELF")/run-real.sh" ]; then
+  REPO="${MYSTIQUECTL_REPO:-https://github.com/sowndev0106/mystiquectl.git}"
+  DEST="${MYSTIQUECTL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mystiquectl}"
+  command -v git >/dev/null 2>&1 || { echo "error: git is needed to fetch mystiquectl -- install it and re-run" >&2; exit 1; }
+  if [ -d "$DEST/.git" ]; then
+    printf 'updating existing checkout in %s ...\n' "$DEST"
+    git -C "$DEST" pull --ff-only
+  elif [ -e "$DEST" ]; then
+    echo "error: $DEST exists but is not a git checkout -- move it aside or set MYSTIQUECTL_DIR" >&2; exit 1
+  else
+    printf 'cloning mystiquectl into %s ...\n' "$DEST"
+    mkdir -p "$(dirname "$DEST")"
+    git clone --depth 1 "$REPO" "$DEST"
+  fi
+  exec bash "$DEST/install.sh" "$@"
+fi
+HERE="$(cd "$(dirname "$SELF")" && pwd)"
 
 # Must match the version run-only.sh / run-real.sh / run-ui.sh / ui-tour.sh
 # all look for -- the app is a bytenode bundle built against this exact
@@ -137,4 +163,4 @@ esac
 
 log ""
 log "done. Run 'mystiquectl' to start the app against your real cooler."
-log "Run './install.sh update' any time to pull the latest source and refresh electron."
+log "Run '$HERE/install.sh update' any time to pull the latest source and refresh electron."

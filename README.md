@@ -177,7 +177,9 @@ info service.
 curl -fsSL https://raw.githubusercontent.com/sowndev0106/mystiquectl/main/install.sh | bash
 ```
 
-or clone and run it yourself:
+That clones the repo into `~/.local/share/mystiquectl` (set `MYSTIQUECTL_DIR`
+to put it elsewhere) and runs `install.sh` from there. Or clone and run it
+yourself:
 
 ```sh
 git clone https://github.com/sowndev0106/mystiquectl.git
@@ -188,7 +190,8 @@ cd mystiquectl
 `install.sh` fetches the pinned Electron 23.3.13 Linux build straight from
 [Electron's own GitHub releases](https://github.com/electron/electron/releases/download/v23.3.13/electron-v23.3.13-linux-x64.zip)
 (MIT-licensed, an official redistribution channel) into `.electron/` — it is
-never committed to this repo. Run `./install.sh update` later to refresh it.
+never committed to this repo. Run `install.sh update` from your checkout later
+to pull the latest source and refresh it.
 
 ### Getting `app.asar`
 
