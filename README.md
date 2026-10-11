@@ -209,14 +209,17 @@ menu's *Exit* quits it for real. On GNOME the tray icon needs the
 AppIndicator extension; without it, starting `mystiquectl` again is the
 way back to the window.
 
-**It starts at login**, hidden in the tray, unless you run
-`mystiquectl autostart off` — that choice sticks across updates and
-reinstalls. Autostart is a `~/.config/autostart/mystiquectl.desktop` entry
+**It starts at login**, hidden in the tray. That's switched on at the first
+install only; after that `mystiquectl autostart on|off` is yours, and updates
+leave it as it is — they don't re-add an entry you removed by hand or through
+your desktop's startup-apps settings either. Autostart is a `~/.config/autostart/mystiquectl.desktop` entry
 (GNOME, KDE, XFCE, …) and, because sway ignores those, an `exec` line in
 your existing `~/.config/sway/config`, between
 `# >>> mystiquectl autostart >>>` / `# <<< mystiquectl autostart <<<`
 markers. The config is backed up to `config.mystiquectl.bak` before the
-first change, and a sway config that doesn't exist is never created. The
+first change, a sway config that doesn't exist is never created, and
+`autostart off` only removes that exact three-line block — if you've moved
+or edited its lines, it leaves the file alone and tells you. The
 "auto start" switch inside DeepCool's own settings page has no effect on
 Linux; use `mystiquectl autostart` instead.
 
@@ -242,8 +245,10 @@ Windows installer**, which you download yourself from DeepCool. In short:
 
 No further unpacking is required — `shim.py` reads and repacks the `.asar`
 archive directly (see [asar.py](asar.py)). Point the tool at your copy either
-by placing it where `shim.py`/`run.sh` expect it, or via whatever path
-argument or environment variable your `install.sh` setup prompts for.
+by placing it where `shim.py`/`run.sh` expect it, or by running the installer
+as `DC_ASAR=/path/to/app.asar ./install.sh` — the `mystiquectl` launcher, the
+app-menu entry and autostart all remember that path (and a `DC_ELECTRON_DIR`,
+likewise) from then on.
 
 This is a one-time, local, non-redistributive step: the file never leaves
 your machine and is never fetched or hosted by this project.

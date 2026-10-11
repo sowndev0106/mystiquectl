@@ -28,7 +28,9 @@ DESKTOP_FILE="$DATA_DIR/applications/mystiquectl.desktop"
 ICON_FILE="$DATA_DIR/icons/hicolor/scalable/apps/mystiquectl.svg"
 AUTOSTART_FILE="$CONFIG_DIR/autostart/mystiquectl.desktop"
 STATE_DIR="$CONFIG_DIR/mystiquectl"
-OFF_MARKER="$STATE_DIR/autostart-off"
+# "on" or "off", whichever was last chosen; install.sh only turns autostart
+# on when there is no choice recorded yet.
+AUTOSTART_STATE="$STATE_DIR/autostart"
 SWAY_CONFIG="$CONFIG_DIR/sway/config"
 SWAY_BEGIN="# >>> mystiquectl autostart >>>"
 SWAY_END="# <<< mystiquectl autostart <<<"
@@ -48,7 +50,7 @@ notify() {
 app_pid() {
   local p args
   for p in $(pgrep -x electron); do
-    args=" $(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null) " || continue
+    args=" $(tr '\0' ' ' 2>/dev/null < "/proc/$p/cmdline") " || continue
     case "$args" in *" --type="*) continue ;; esac
     case "$args" in *" $ASAR "*) echo "$p"; return 0 ;; esac
   done
@@ -63,12 +65,17 @@ run() {
   # Started from the app menu, by install.sh or at login: nobody sees
   # stderr, so keep it in a log and turn a failed start into a desktop
   # notification.
+  # Appended, not truncated: a click that only shows the window of an app
+  # already running must not wipe what that app has logged so far.
   mkdir -p "$(dirname "$LOG")"
-  env DC_UI=1 "$HERE/run-real.sh" "$@" >"$LOG" 2>&1
+  [ "$(stat -c %s "$LOG" 2>/dev/null || echo 0)" -gt 1000000 ] && mv -f "$LOG" "$LOG.old"
+  local start; start=$(( $(wc -l 2>/dev/null < "$LOG" || echo 0) + 1 ))
+  echo "--- $(date '+%F %T') mystiquectl ${DC_BACKGROUND:+--background }$*" >> "$LOG"
+  env DC_UI=1 "$HERE/run-real.sh" "$@" >>"$LOG" 2>&1
   local rc=$?
   if [ "$rc" != 0 ]; then
     local msg
-    msg="$(grep -m1 '^error:' "$LOG" || tail -n1 "$LOG")"
+    msg="$(tail -n +"$start" "$LOG" | grep -m1 '^error:' || tail -n1 "$LOG")"
     notify "mystiquectl could not start" "${msg#error: }"$'\n'"Full log: $LOG"
   fi
   return "$rc"
@@ -93,14 +100,28 @@ background() {
     notify "mystiquectl did not start" "No MYSTIQUE cooler (3633:0009) found after ${wait}s -- plug it in, then start mystiquectl."
     return 1
   fi
+  # Started with -autoRun the tray icon is all there is, and Chromium only
+  # uses the StatusNotifier tray if its host (waybar, a KDE/GNOME panel) is up
+  # when the icon is made -- otherwise it falls back to a legacy one those
+  # never show. At login that host may start after us; give it a moment.
+  # Without gdbus, or with no tray host at all (plain GNOME), just go.
+  if command -v gdbus >/dev/null 2>&1; then
+    for ((i = 0; i < ${MYSTIQUECTL_TRAY_WAIT:-15}; i++)); do
+      gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
+        --method org.freedesktop.DBus.NameHasOwner org.kde.StatusNotifierWatcher 2>/dev/null | grep -q true && break
+      sleep 1
+    done
+  fi
   DC_BACKGROUND=1 run "$@"
 }
 
 sway_has_block() { [ -f "$SWAY_CONFIG" ] && grep -qxF "$SWAY_BEGIN" "$SWAY_CONFIG"; }
 
 autostart_on() {
-  rm -f "$OFF_MARKER"
+  mkdir -p "$STATE_DIR"; echo on > "$AUTOSTART_STATE"
   mkdir -p "$(dirname "$AUTOSTART_FILE")"
+  # No NoDisplay: GNOME's and KDE's startup-app settings hide entries that
+  # have it, and that's where people look to switch this off.
   cat > "$AUTOSTART_FILE" <<DESKTOP
 [Desktop Entry]
 Type=Application
@@ -109,7 +130,6 @@ Comment=Start mystiquectl hidden, in the tray
 Exec="$LAUNCHER" --background
 Icon=mystiquectl
 Terminal=false
-NoDisplay=true
 X-GNOME-Autostart-enabled=true
 DESKTOP
   echo "autostart on: $AUTOSTART_FILE"
@@ -119,30 +139,50 @@ DESKTOP
   local line="exec \"$LAUNCHER\" --background"
   if sway_has_block; then
     echo "autostart on: already in $SWAY_CONFIG"
-  elif [ -f "$SWAY_CONFIG" ]; then
+  elif [ -f "$SWAY_CONFIG" ] && [ -w "$SWAY_CONFIG" ]; then
     [ -e "$SWAY_CONFIG.mystiquectl.bak" ] || cp -p "$SWAY_CONFIG" "$SWAY_CONFIG.mystiquectl.bak"
-    # Start on a line of our own even if the file doesn't end in a newline.
-    [ -n "$(tail -c1 "$SWAY_CONFIG")" ] && echo >> "$SWAY_CONFIG"
-    printf '%s\n%s\n%s\n' "$SWAY_BEGIN" "$line" "$SWAY_END" >> "$SWAY_CONFIG"
-    echo "autostart on: added to $SWAY_CONFIG (backup: $SWAY_CONFIG.mystiquectl.bak)"
+    # On a line of its own even if the file doesn't end in a newline.
+    if { [ -z "$(tail -c1 "$SWAY_CONFIG")" ] || echo; printf '%s\n%s\n%s\n' "$SWAY_BEGIN" "$line" "$SWAY_END"; } >> "$SWAY_CONFIG"; then
+      echo "autostart on: added to $SWAY_CONFIG (backup: $SWAY_CONFIG.mystiquectl.bak)"
+    else
+      echo "warning: couldn't write $SWAY_CONFIG -- add this line to it yourself: $line" >&2
+    fi
+  elif [ -f "$SWAY_CONFIG" ]; then
+    echo "$SWAY_CONFIG isn't writable (managed by something else?) -- add this line to it yourself: $line"
   elif [ -n "${SWAYSOCK:-}" ]; then
     echo "sway doesn't read ~/.config/autostart -- add this line to your sway config: $line"
   fi
 }
 
 autostart_off() {
-  mkdir -p "$STATE_DIR"; : > "$OFF_MARKER"
+  mkdir -p "$STATE_DIR"; echo off > "$AUTOSTART_STATE"
   rm -f "$AUTOSTART_FILE"
   if sway_has_block; then
-    if grep -qxF "$SWAY_END" "$SWAY_CONFIG"; then
-      # Written back through the existing file, not mv'd over it: a sway
-      # config is often a symlink into a dotfiles repo.
-      local tmp; tmp="$(mktemp)"
-      awk -v b="$SWAY_BEGIN" -v e="$SWAY_END" '$0 == b { skip = 1; next } skip && $0 == e { skip = 0; next } !skip' "$SWAY_CONFIG" > "$tmp" \
-        && cat "$tmp" > "$SWAY_CONFIG"
-      rm -f "$tmp"
+    # Only exactly what autostart_on added comes out: marker, our exec line,
+    # marker, one after the other. A marker anywhere else (moved, edited,
+    # half-deleted by hand) leaves the whole file alone -- cutting "from one
+    # marker to the next" could take your own lines with it.
+    local target tmp
+    target="$(readlink -f "$SWAY_CONFIG")"
+    # Next to the real file, then mv: never a half-written config if the
+    # disk fills, and a config symlinked into a dotfiles repo stays a symlink.
+    if ! tmp="$(mktemp "$target.XXXXXX" 2>/dev/null)"; then
+      echo "warning: can't write next to $target -- remove the mystiquectl lines from it by hand" >&2
+    elif awk -v b="$SWAY_BEGIN" -v e="$SWAY_END" '
+           { line[NR] = $0 }
+           END {
+             for (i = 1; i <= NR; i++) {
+               if (line[i] == b && line[i + 1] ~ /^exec .*mystiquectl.* --background$/ && line[i + 2] == e) { i += 2; continue }
+               if (line[i] == b || line[i] == e) stray = 1
+               print line[i]
+             }
+             exit stray
+           }' "$SWAY_CONFIG" > "$tmp"; then
+      chmod --reference="$target" "$tmp" 2>/dev/null
+      mv -f "$tmp" "$target"
     else
-      echo "warning: $SWAY_CONFIG has '$SWAY_BEGIN' but no '$SWAY_END' -- remove the mystiquectl lines by hand" >&2
+      rm -f "$tmp"
+      echo "warning: the mystiquectl lines in $SWAY_CONFIG aren't the block it added any more -- left the file alone; remove them by hand" >&2
     fi
   fi
   echo "autostart off"
@@ -199,9 +239,15 @@ uninstall() {
   if [ -n "$pid" ]; then
     kill "$pid" 2>/dev/null
     for _ in $(seq 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "warning: the app (pid $pid) ignored SIGTERM for 5s -- killing it" >&2
+      kill -KILL "$pid" 2>/dev/null
+    fi
   fi
   autostart_off >/dev/null
-  rm -rf "$STATE_DIR"
+  # Only our own file: the directory also holds claude-usage.sh's override,
+  # which is yours.
+  rm -f "$AUTOSTART_STATE"; rmdir "$STATE_DIR" 2>/dev/null
   if grep -qa DC_CAPTURE_DIR "$ASAR" 2>/dev/null; then
     DC_ASAR="$ASAR" "$HERE/shim.py" uninstall || echo "warning: could not restore app.asar -- see above; continuing" >&2
   fi
