@@ -2,13 +2,19 @@
 # mystiquectl -- start the app, or look after this install.
 #
 #   mystiquectl [args]            start the app on your desktop, against the
-#                                 real cooler (DC_UI=1 run-real.sh [args])
+#                                 real cooler (DC_UI=1 run-real.sh [args]);
+#                                 if it's already running, show its window
+#   mystiquectl --background      start it hidden, in the tray -- what
+#                                 autostart runs at login
+#   mystiquectl autostart [on|off|status]
+#                                 start --background at every login or not
 #   mystiquectl update            pull the latest source, refresh electron,
 #                                 deps, launcher and menu entry
-#   mystiquectl uninstall [-y]    remove the launcher, menu entry and icon,
-#                                 restore the pristine app.asar, and delete
-#                                 this checkout if install.sh's curl | bash
-#                                 path created it (a clone of your own stays)
+#   mystiquectl uninstall [-y]    stop the app, remove the launcher, menu
+#                                 entry, icon and autostart, restore the
+#                                 pristine app.asar, and delete this checkout
+#                                 if install.sh's curl | bash path created it
+#                                 (a clone of your own stays)
 #   mystiquectl help
 #
 # ~/.local/bin/mystiquectl, written by install.sh, just execs this file.
@@ -16,45 +22,164 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 BIN_DIR="$HOME/.local/bin"
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}"
 LAUNCHER="$BIN_DIR/mystiquectl"
 DESKTOP_FILE="$DATA_DIR/applications/mystiquectl.desktop"
 ICON_FILE="$DATA_DIR/icons/hicolor/scalable/apps/mystiquectl.svg"
+AUTOSTART_FILE="$CONFIG_DIR/autostart/mystiquectl.desktop"
+STATE_DIR="$CONFIG_DIR/mystiquectl"
+OFF_MARKER="$STATE_DIR/autostart-off"
+SWAY_CONFIG="$CONFIG_DIR/sway/config"
+SWAY_BEGIN="# >>> mystiquectl autostart >>>"
+SWAY_END="# <<< mystiquectl autostart <<<"
+LOG="${XDG_STATE_HOME:-$HOME/.local/state}/mystiquectl/launch.log"
 ASAR="${DC_ASAR:-$HOME/.var/app/com.usebottles.bottles/data/bottles/bottles/Local/drive_c/DeepCool/resources/app.asar}"
 
-usage() { sed -n '2,12s/^# \{0,1\}//p' "$HERE/mystiquectl"; }
+usage() { sed -n '2,18s/^# \{0,1\}//p' "$HERE/mystiquectl"; }
+
+notify() {
+  command -v notify-send >/dev/null 2>&1 && notify-send -i mystiquectl "$1" "$2"
+  return 0
+}
+
+# The running app's main electron pid, if any -- the same test as
+# run-real.sh's app_running(), minus the socket.
+app_pid() {
+  local p args
+  for p in $(pgrep -x electron); do
+    args="$(tr '\0' '\n' < "/proc/$p/cmdline" 2>/dev/null)" || continue
+    grep -qxF -- "$ASAR" <<<"$args" || continue
+    grep -q -- '^--type=' <<<"$args" && continue
+    echo "$p"; return 0
+  done
+  return 1
+}
 
 run() {
   # From a terminal, behave exactly like running run-real.sh by hand.
   if [ -t 2 ]; then
     exec env DC_UI=1 "$HERE/run-real.sh" "$@"
   fi
-  # Started from the app menu (or by install.sh): nobody sees stderr, so keep
-  # it in a log and turn a failed start into a desktop notification.
-  local log="${XDG_STATE_HOME:-$HOME/.local/state}/mystiquectl/launch.log"
-  mkdir -p "$(dirname "$log")"
-  env DC_UI=1 "$HERE/run-real.sh" "$@" >"$log" 2>&1
+  # Started from the app menu, by install.sh or at login: nobody sees
+  # stderr, so keep it in a log and turn a failed start into a desktop
+  # notification.
+  mkdir -p "$(dirname "$LOG")"
+  env DC_UI=1 "$HERE/run-real.sh" "$@" >"$LOG" 2>&1
   local rc=$?
   if [ "$rc" != 0 ]; then
     local msg
-    msg="$(grep -m1 '^error:' "$log" || tail -n1 "$log")"
-    if command -v notify-send >/dev/null 2>&1; then
-      notify-send -i mystiquectl "mystiquectl could not start" "${msg#error: }"$'\n'"Full log: $log"
-    fi
+    msg="$(grep -m1 '^error:' "$LOG" || tail -n1 "$LOG")"
+    notify "mystiquectl could not start" "${msg#error: }"$'\n'"Full log: $LOG"
   fi
   return "$rc"
 }
 
+background() {
+  # Typed in a terminal: detach, so the prompt comes back and closing the
+  # terminal doesn't take the app with it.
+  if [ -t 2 ]; then
+    setsid -f "$HERE/mystiquectl" --background "$@" </dev/null >/dev/null 2>&1
+    echo "starting in the background (tray icon); log: $LOG"
+    return 0
+  fi
+  # At login the cooler may not have enumerated yet, and run-real.sh gives up
+  # at once without it.
+  local i wait="${MYSTIQUECTL_WAIT:-30}"
+  for ((i = 0; i < wait; i++)); do
+    lsusb 2>/dev/null | grep '3633:0009' >/dev/null && break
+    sleep 1
+  done
+  if ! lsusb 2>/dev/null | grep '3633:0009' >/dev/null; then
+    notify "mystiquectl did not start" "No MYSTIQUE cooler (3633:0009) found after ${wait}s -- plug it in, then start mystiquectl."
+    return 1
+  fi
+  DC_BACKGROUND=1 run "$@"
+}
+
+sway_has_block() { [ -f "$SWAY_CONFIG" ] && grep -qxF "$SWAY_BEGIN" "$SWAY_CONFIG"; }
+
+autostart_on() {
+  rm -f "$OFF_MARKER"
+  mkdir -p "$(dirname "$AUTOSTART_FILE")"
+  cat > "$AUTOSTART_FILE" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=mystiquectl
+Comment=Start mystiquectl hidden, in the tray
+Exec="$LAUNCHER" --background
+Icon=mystiquectl
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+DESKTOP
+  echo "autostart on: $AUTOSTART_FILE"
+  # sway runs no ~/.config/autostart entries, only its own config's exec
+  # lines. Never create that file: one in your home replaces the system
+  # default config wholesale.
+  local line="exec \"$LAUNCHER\" --background"
+  if sway_has_block; then
+    echo "autostart on: already in $SWAY_CONFIG"
+  elif [ -f "$SWAY_CONFIG" ]; then
+    [ -e "$SWAY_CONFIG.mystiquectl.bak" ] || cp -p "$SWAY_CONFIG" "$SWAY_CONFIG.mystiquectl.bak"
+    # Start on a line of our own even if the file doesn't end in a newline.
+    [ -n "$(tail -c1 "$SWAY_CONFIG")" ] && echo >> "$SWAY_CONFIG"
+    printf '%s\n%s\n%s\n' "$SWAY_BEGIN" "$line" "$SWAY_END" >> "$SWAY_CONFIG"
+    echo "autostart on: added to $SWAY_CONFIG (backup: $SWAY_CONFIG.mystiquectl.bak)"
+  elif [ -n "${SWAYSOCK:-}" ]; then
+    echo "sway doesn't read ~/.config/autostart -- add this line to your sway config: $line"
+  fi
+}
+
+autostart_off() {
+  mkdir -p "$STATE_DIR"; : > "$OFF_MARKER"
+  rm -f "$AUTOSTART_FILE"
+  if sway_has_block; then
+    if grep -qxF "$SWAY_END" "$SWAY_CONFIG"; then
+      # Written back through the existing file, not mv'd over it: a sway
+      # config is often a symlink into a dotfiles repo.
+      local tmp; tmp="$(mktemp)"
+      awk -v b="$SWAY_BEGIN" -v e="$SWAY_END" '$0 == b { skip = 1; next } skip && $0 == e { skip = 0; next } !skip' "$SWAY_CONFIG" > "$tmp" \
+        && cat "$tmp" > "$SWAY_CONFIG"
+      rm -f "$tmp"
+    else
+      echo "warning: $SWAY_CONFIG has '$SWAY_BEGIN' but no '$SWAY_END' -- remove the mystiquectl lines by hand" >&2
+    fi
+  fi
+  echo "autostart off"
+}
+
+autostart_status() {
+  if [ -f "$AUTOSTART_FILE" ]; then echo "autostart entry : on  ($AUTOSTART_FILE)"; else echo "autostart entry : off"; fi
+  if [ -f "$SWAY_CONFIG" ]; then
+    if sway_has_block; then echo "sway config     : on  ($SWAY_CONFIG)"; else echo "sway config     : off ($SWAY_CONFIG)"; fi
+  fi
+  local pid
+  if pid="$(app_pid)"; then echo "running         : yes (pid $pid)"; else echo "running         : no"; fi
+}
+
+autostart() {
+  case "${1:-status}" in
+    on)     autostart_on ;;
+    off)    autostart_off ;;
+    status) autostart_status ;;
+    *)      echo "usage: mystiquectl autostart [on|off|status]" >&2; return 2 ;;
+  esac
+}
+
 uninstall() {
-  local yes="" managed="" what=()
+  local yes="" managed="" pid="" what=()
   [ "${1:-}" = "-y" ] && yes=1
   # Only the checkout install.sh's curl | bash path cloned is ours to delete.
   local default_dir="${MYSTIQUECTL_DIR:-$DATA_DIR/mystiquectl}"
   [ -d "$default_dir" ] && [ "$(cd "$default_dir" && pwd)" = "$HERE" ] && managed=1
 
+  pid="$(app_pid)" && what+=("running app   stop it (pid $pid)")
   # The launcher may belong to a different checkout; leave that one alone.
   grep -qF "$HERE/" "$LAUNCHER" 2>/dev/null && what+=("launcher      $LAUNCHER")
-  [ -e "$DESKTOP_FILE" ] && what+=("menu entry    $DESKTOP_FILE")
-  [ -e "$ICON_FILE" ]    && what+=("icon          $ICON_FILE")
+  [ -e "$DESKTOP_FILE" ]   && what+=("menu entry    $DESKTOP_FILE")
+  [ -e "$ICON_FILE" ]      && what+=("icon          $ICON_FILE")
+  [ -e "$AUTOSTART_FILE" ] && what+=("autostart     $AUTOSTART_FILE")
+  sway_has_block           && what+=("autostart     the mystiquectl lines in $SWAY_CONFIG")
   grep -qa DC_CAPTURE_DIR "$ASAR" 2>/dev/null && what+=("shim          restore the original $ASAR")
   [ -n "$managed" ] && what+=("checkout      $HERE (with its electron)")
 
@@ -69,6 +194,14 @@ uninstall() {
     case "$ans" in y|Y|yes) ;; *) echo "cancelled"; return 1 ;; esac
   fi
 
+  # First, so it isn't still holding app.asar and the bridge while they go.
+  # run-real.sh's EXIT trap takes the bridge down with it.
+  if [ -n "$pid" ]; then
+    kill "$pid" 2>/dev/null
+    for _ in $(seq 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+  fi
+  autostart_off >/dev/null
+  rm -rf "$STATE_DIR"
   if grep -qa DC_CAPTURE_DIR "$ASAR" 2>/dev/null; then
     DC_ASAR="$ASAR" "$HERE/shim.py" uninstall || echo "warning: could not restore app.asar -- see above; continuing" >&2
   fi
@@ -81,6 +214,8 @@ uninstall() {
 }
 
 case "${1:-}" in
+  --background)    shift; background "$@" ;;
+  autostart)       shift; autostart "$@" ;;
   update)          shift; exec "$HERE/install.sh" update "$@" ;;
   uninstall)       shift; uninstall "$@" ;;
   help|-h|--help)  usage ;;
