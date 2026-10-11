@@ -21,7 +21,9 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOCK="${DC_USB_SOCK:-/tmp/dc-usb-bridge.sock}"
 
-if ! lsusb 2>/dev/null | grep -q '3633:0009'; then
+# Not grep -q: under pipefail its early exit can SIGPIPE lsusb and turn a
+# match into a failure.
+if ! lsusb 2>/dev/null | grep '3633:0009' >/dev/null; then
   echo "error: no DeepCool MYSTIQUE (3633:0009) on the bus" >&2; exit 1
 fi
 

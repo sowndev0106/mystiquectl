@@ -31,9 +31,17 @@ STATE_DIR="$CONFIG_DIR/mystiquectl"
 # "on" or "off", whichever was last chosen; install.sh only turns autostart
 # on when there is no choice recorded yet.
 AUTOSTART_STATE="$STATE_DIR/autostart"
-SWAY_CONFIG="$CONFIG_DIR/sway/config"
-SWAY_BEGIN="# >>> mystiquectl autostart >>>"
-SWAY_END="# <<< mystiquectl autostart <<<"
+BLOCK_BEGIN="# >>> mystiquectl autostart >>>"
+BLOCK_END="# <<< mystiquectl autostart <<<"
+# Window managers that run no ~/.config/autostart entries, only what their
+# own config starts: name|env var set while it runs|how its config starts a
+# program|where it looks for that config, first one found wins. (sway falls
+# back to the i3 config when it has none of its own, which works out too.)
+WMS=(
+  "sway|SWAYSOCK|exec|$CONFIG_DIR/sway/config|$HOME/.sway/config"
+  "i3|I3SOCK|exec|$CONFIG_DIR/i3/config|$HOME/.i3/config"
+  "hyprland|HYPRLAND_INSTANCE_SIGNATURE|exec-once =|$CONFIG_DIR/hypr/hyprland.conf"
+)
 LOG="${XDG_STATE_HOME:-$HOME/.local/state}/mystiquectl/launch.log"
 ASAR="${DC_ASAR:-$HOME/.var/app/com.usebottles.bottles/data/bottles/bottles/Local/drive_c/DeepCool/resources/app.asar}"
 
@@ -115,7 +123,71 @@ background() {
   DC_BACKGROUND=1 run "$@"
 }
 
-sway_has_block() { [ -f "$SWAY_CONFIG" ] && grep -qxF "$SWAY_BEGIN" "$SWAY_CONFIG"; }
+# One "name|config|exec line|env var" row per window manager in WMS, with
+# the config empty when none of its paths exists.
+wm_rows() {
+  local spec name var kw rest p cfg
+  for spec in "${WMS[@]}"; do
+    IFS='|' read -r name var kw rest <<<"$spec"
+    cfg=""
+    while [ -n "$rest" ]; do
+      p="${rest%%|*}"; [ "$p" = "$rest" ] && rest="" || rest="${rest#*|}"
+      [ -f "$p" ] && { cfg="$p"; break; }
+    done
+    printf '%s|%s|%s|%s\n' "$name" "$cfg" "$kw \"$LAUNCHER\" --background" "$var"
+  done
+}
+
+has_block() { [ -f "$1" ] && grep -qxF "$BLOCK_BEGIN" "$1"; }
+
+# Never creates a config: one in your home replaces the window manager's
+# system default wholesale.
+wm_add() {
+  local name="$1" cfg="$2" line="$3"
+  if has_block "$cfg"; then
+    echo "autostart on: already in $cfg"
+  elif [ -w "$cfg" ]; then
+    [ -e "$cfg.mystiquectl.bak" ] || cp -p "$cfg" "$cfg.mystiquectl.bak"
+    # On a line of its own even if the file doesn't end in a newline.
+    if { [ -z "$(tail -c1 "$cfg")" ] || echo; printf '%s\n%s\n%s\n' "$BLOCK_BEGIN" "$line" "$BLOCK_END"; } >> "$cfg"; then
+      echo "autostart on: added to $cfg (backup: $cfg.mystiquectl.bak)"
+    else
+      echo "warning: couldn't write $cfg -- add this line to it yourself: $line" >&2
+    fi
+  else
+    echo "$cfg isn't writable (managed by something else?) -- add this line to it yourself: $line"
+  fi
+}
+
+# Only exactly what wm_add added comes out: marker, our exec line, marker,
+# one after the other. A marker anywhere else (moved, edited, half-deleted by
+# hand) leaves the whole file alone -- cutting "from one marker to the next"
+# could take your own lines with it.
+wm_remove() {
+  local cfg="$1" target tmp
+  has_block "$cfg" || return 0
+  target="$(readlink -f "$cfg")"
+  # Next to the real file, then mv: never a half-written config if the disk
+  # fills, and a config symlinked into a dotfiles repo stays a symlink.
+  if ! tmp="$(mktemp "$target.XXXXXX" 2>/dev/null)"; then
+    echo "warning: can't write next to $target -- remove the mystiquectl lines from it by hand" >&2
+  elif awk -v b="$BLOCK_BEGIN" -v e="$BLOCK_END" '
+         { line[NR] = $0 }
+         END {
+           for (i = 1; i <= NR; i++) {
+             if (line[i] == b && line[i + 1] ~ /^(exec|exec-once *=) .*mystiquectl.* --background$/ && line[i + 2] == e) { i += 2; continue }
+             if (line[i] == b || line[i] == e) stray = 1
+             print line[i]
+           }
+           exit stray
+         }' "$cfg" > "$tmp"; then
+    chmod --reference="$target" "$tmp" 2>/dev/null
+    mv -f "$tmp" "$target"
+  else
+    rm -f "$tmp"
+    echo "warning: the mystiquectl lines in $cfg aren't the block it added any more -- left the file alone; remove them by hand" >&2
+  fi
+}
 
 autostart_on() {
   mkdir -p "$STATE_DIR"; echo on > "$AUTOSTART_STATE"
@@ -133,67 +205,33 @@ Terminal=false
 X-GNOME-Autostart-enabled=true
 DESKTOP
   echo "autostart on: $AUTOSTART_FILE"
-  # sway runs no ~/.config/autostart entries, only its own config's exec
-  # lines. Never create that file: one in your home replaces the system
-  # default config wholesale.
-  local line="exec \"$LAUNCHER\" --background"
-  if sway_has_block; then
-    echo "autostart on: already in $SWAY_CONFIG"
-  elif [ -f "$SWAY_CONFIG" ] && [ -w "$SWAY_CONFIG" ]; then
-    [ -e "$SWAY_CONFIG.mystiquectl.bak" ] || cp -p "$SWAY_CONFIG" "$SWAY_CONFIG.mystiquectl.bak"
-    # On a line of its own even if the file doesn't end in a newline.
-    if { [ -z "$(tail -c1 "$SWAY_CONFIG")" ] || echo; printf '%s\n%s\n%s\n' "$SWAY_BEGIN" "$line" "$SWAY_END"; } >> "$SWAY_CONFIG"; then
-      echo "autostart on: added to $SWAY_CONFIG (backup: $SWAY_CONFIG.mystiquectl.bak)"
-    else
-      echo "warning: couldn't write $SWAY_CONFIG -- add this line to it yourself: $line" >&2
+  local name cfg line var
+  while IFS='|' read -r name cfg line var; do
+    if [ -n "$cfg" ]; then
+      wm_add "$name" "$cfg" "$line"
+    elif [ -n "${!var:-}" ]; then
+      echo "$name doesn't read ~/.config/autostart -- add this line to your $name config: $line"
     fi
-  elif [ -f "$SWAY_CONFIG" ]; then
-    echo "$SWAY_CONFIG isn't writable (managed by something else?) -- add this line to it yourself: $line"
-  elif [ -n "${SWAYSOCK:-}" ]; then
-    echo "sway doesn't read ~/.config/autostart -- add this line to your sway config: $line"
-  fi
+  done < <(wm_rows)
 }
 
 autostart_off() {
   mkdir -p "$STATE_DIR"; echo off > "$AUTOSTART_STATE"
   rm -f "$AUTOSTART_FILE"
-  if sway_has_block; then
-    # Only exactly what autostart_on added comes out: marker, our exec line,
-    # marker, one after the other. A marker anywhere else (moved, edited,
-    # half-deleted by hand) leaves the whole file alone -- cutting "from one
-    # marker to the next" could take your own lines with it.
-    local target tmp
-    target="$(readlink -f "$SWAY_CONFIG")"
-    # Next to the real file, then mv: never a half-written config if the
-    # disk fills, and a config symlinked into a dotfiles repo stays a symlink.
-    if ! tmp="$(mktemp "$target.XXXXXX" 2>/dev/null)"; then
-      echo "warning: can't write next to $target -- remove the mystiquectl lines from it by hand" >&2
-    elif awk -v b="$SWAY_BEGIN" -v e="$SWAY_END" '
-           { line[NR] = $0 }
-           END {
-             for (i = 1; i <= NR; i++) {
-               if (line[i] == b && line[i + 1] ~ /^exec .*mystiquectl.* --background$/ && line[i + 2] == e) { i += 2; continue }
-               if (line[i] == b || line[i] == e) stray = 1
-               print line[i]
-             }
-             exit stray
-           }' "$SWAY_CONFIG" > "$tmp"; then
-      chmod --reference="$target" "$tmp" 2>/dev/null
-      mv -f "$tmp" "$target"
-    else
-      rm -f "$tmp"
-      echo "warning: the mystiquectl lines in $SWAY_CONFIG aren't the block it added any more -- left the file alone; remove them by hand" >&2
-    fi
-  fi
+  local name cfg line var
+  while IFS='|' read -r name cfg line var; do
+    [ -n "$cfg" ] && wm_remove "$cfg"
+  done < <(wm_rows)
   echo "autostart off"
 }
 
 autostart_status() {
   if [ -f "$AUTOSTART_FILE" ]; then echo "autostart entry : on  ($AUTOSTART_FILE)"; else echo "autostart entry : off"; fi
-  if [ -f "$SWAY_CONFIG" ]; then
-    if sway_has_block; then echo "sway config     : on  ($SWAY_CONFIG)"; else echo "sway config     : off ($SWAY_CONFIG)"; fi
-  fi
-  local pid
+  local name cfg line var pid
+  while IFS='|' read -r name cfg line var; do
+    [ -n "$cfg" ] || continue
+    if has_block "$cfg"; then printf '%-15s : on  (%s)\n' "$name config" "$cfg"; else printf '%-15s : off (%s)\n' "$name config" "$cfg"; fi
+  done < <(wm_rows)
   if pid="$(app_pid)"; then echo "running         : yes (pid $pid)"; else echo "running         : no"; fi
 }
 
@@ -219,7 +257,10 @@ uninstall() {
   [ -e "$DESKTOP_FILE" ]   && what+=("menu entry    $DESKTOP_FILE")
   [ -e "$ICON_FILE" ]      && what+=("icon          $ICON_FILE")
   [ -e "$AUTOSTART_FILE" ] && what+=("autostart     $AUTOSTART_FILE")
-  sway_has_block           && what+=("autostart     the mystiquectl lines in $SWAY_CONFIG")
+  local name cfg line var
+  while IFS='|' read -r name cfg line var; do
+    has_block "$cfg" && what+=("autostart     the mystiquectl lines in $cfg")
+  done < <(wm_rows)
   grep -qa DC_CAPTURE_DIR "$ASAR" 2>/dev/null && what+=("shim          restore the original $ASAR")
   [ -n "$managed" ] && what+=("checkout      $HERE (with its electron)")
 

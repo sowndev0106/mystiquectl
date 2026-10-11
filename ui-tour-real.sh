@@ -7,7 +7,8 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOCK="${DC_USB_SOCK:-/tmp/dc-usb-bridge.sock}"
 
-lsusb 2>/dev/null | grep -q '3633:0009' || { echo "no MYSTIQUE on the bus" >&2; exit 1; }
+# Not grep -q: see run-real.sh.
+lsusb 2>/dev/null | grep '3633:0009' >/dev/null || { echo "no MYSTIQUE on the bus" >&2; exit 1; }
 # The lock run-real.sh takes for as long as the app it starts runs (it's
 # usually up in the tray, from mystiquectl): killing the bridge below would
 # cut that app off the cooler. Nothing started here inherits the lock.

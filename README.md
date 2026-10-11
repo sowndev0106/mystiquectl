@@ -212,12 +212,16 @@ way back to the window.
 **It starts at login**, hidden in the tray. That's switched on at the first
 install only; after that `mystiquectl autostart on|off` is yours, and updates
 leave it as it is — they don't re-add an entry you removed by hand or through
-your desktop's startup-apps settings either. Autostart is a `~/.config/autostart/mystiquectl.desktop` entry
-(GNOME, KDE, XFCE, …) and, because sway ignores those, an `exec` line in
-your existing `~/.config/sway/config`, between
-`# >>> mystiquectl autostart >>>` / `# <<< mystiquectl autostart <<<`
-markers. The config is backed up to `config.mystiquectl.bak` before the
-first change, a sway config that doesn't exist is never created, and
+your desktop's startup-apps settings either. Autostart is a
+`~/.config/autostart/mystiquectl.desktop` entry (GNOME, KDE, XFCE, …) and,
+because sway, i3 and Hyprland ignore those, a line in whichever of their
+configs you already have — `~/.config/sway/config` (or `~/.sway/config`),
+`~/.config/i3/config` (or `~/.i3/config`), `~/.config/hypr/hyprland.conf` —
+between `# >>> mystiquectl autostart >>>` / `# <<< mystiquectl autostart <<<`
+markers: `exec "…/mystiquectl" --background`, or `exec-once = …` for
+Hyprland. Each config is backed up to `<config>.mystiquectl.bak` before its
+first change, a config that doesn't exist is never created (if you run one of
+those without one, `autostart on` prints the line to add), and
 `autostart off` only removes that exact three-line block — if you've moved
 or edited its lines, it leaves the file alone and tells you. The
 "auto start" switch inside DeepCool's own settings page has no effect on
