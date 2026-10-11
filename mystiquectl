@@ -43,14 +43,14 @@ notify() {
 }
 
 # The running app's main electron pid, if any -- the same test as
-# run-real.sh's app_running(), minus the socket.
+# run-real.sh's app_running() (see there for why it matches words), minus
+# the socket.
 app_pid() {
   local p args
   for p in $(pgrep -x electron); do
-    args="$(tr '\0' '\n' < "/proc/$p/cmdline" 2>/dev/null)" || continue
-    grep -qxF -- "$ASAR" <<<"$args" || continue
-    grep -q -- '^--type=' <<<"$args" && continue
-    echo "$p"; return 0
+    args=" $(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null) " || continue
+    case "$args" in *" --type="*) continue ;; esac
+    case "$args" in *" $ASAR "*) echo "$p"; return 0 ;; esac
   done
   return 1
 }

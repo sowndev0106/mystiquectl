@@ -43,15 +43,17 @@ ui_env() {
 # Already running = a main electron process on this same app.asar (only its
 # own children carry --type=, and other Electron apps run other files) with
 # the bridge socket in place. A socket left behind by a killed bridge doesn't
-# count on its own: nothing is there to use it.
+# count on its own: nothing is there to use it. Chromium rewrites its
+# /proc/<pid>/cmdline into one space-joined string (switches first, so
+# "--no-sandbox -autoRun <asar>"), hence matching words, not NUL-separated
+# arguments.
 app_running() {
   [ -S "$SOCK" ] || return 1
   local p args
   for p in $(pgrep -x electron); do
-    args="$(tr '\0' '\n' < "/proc/$p/cmdline" 2>/dev/null)" || continue
-    grep -qxF -- "$DC_UI_ASAR" <<<"$args" || continue
-    grep -q -- '^--type=' <<<"$args" && continue
-    return 0
+    args=" $(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null) " || continue
+    case "$args" in *" --type="*) continue ;; esac
+    case "$args" in *" $DC_UI_ASAR "*) return 0 ;; esac
   done
   return 1
 }
